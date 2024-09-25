@@ -5,7 +5,7 @@ import torch
 # from customed_pipeline import CustomedPipeline
 from flex import CustomedPipeline
 from hf_ref import NewPhi3Config
-from model3 import CustomedPhi3ForCausalLM
+from model2 import CustomedPhi3ForCausalLM
 import requests
 
 def download_model():
