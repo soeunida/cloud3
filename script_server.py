@@ -1,12 +1,9 @@
-from datasets import load_dataset
 import torch
 from transformers import AutoTokenizer
-import torch
-# from customed_pipeline import CustomedPipeline
-from flex import CustomedPipeline
+from customed_pipeline import CustomedPipeline
 from hf_ref import NewPhi3Config
 from model2 import CustomedPhi3ForCausalLM
-import requests
+#import requests
 
 def download_model():
     base_path = '/nas/user/hayoung'
