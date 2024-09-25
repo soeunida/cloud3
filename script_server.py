@@ -1,3 +1,4 @@
+from datasets import load_dataset
 import torch
 from transformers import AutoTokenizer
 import torch
@@ -31,7 +32,7 @@ config = NewPhi3Config(base_path='/nas/user/hayoung')
 model = CustomedPhi3ForCausalLM(config)
 
 pipe = CustomedPipeline(model, config)
-pipe.load_data(file_path= "/home/hayoung/ss/test.jsonl", o_batch_size=5,  i_batch_size=3)
+pipe.load_data(file_path= "/home/hayoung/ss/test.jsonl", batch_size=30)
 outputs = pipe.forward(max_new_tokens=15)
 result = pipe.postprocess(outputs)
 print(result)
