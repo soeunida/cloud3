@@ -3,7 +3,7 @@ from transformers import AutoTokenizer
 from customed_pipeline import CustomedPipeline
 from hf_ref import NewPhi3Config
 from model2 import CustomedPhi3ForCausalLM
-#import requests
+import requests
 
 def download_model():
     base_path = '/nas/user/hayoung'
@@ -29,7 +29,7 @@ config = NewPhi3Config(base_path='/nas/user/hayoung')
 model = CustomedPhi3ForCausalLM(config)
 
 pipe = CustomedPipeline(model, config)
-pipe.load_data(file_path= "/home/hayoung/ss/test.jsonl", batch_size=30)
+pipe.load_data(file_path= "./test.jsonl", batch_size=30)
 outputs = pipe.forward(max_new_tokens=15)
 result = pipe.postprocess(outputs)
 print(result)
