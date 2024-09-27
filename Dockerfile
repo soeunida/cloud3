@@ -25,7 +25,7 @@ RUN FLASH_ATTENTION_SKIP_CUDA_BUILD=TRUE pip install flash-attn
 
 ENV CUDA_HOME=/usr/local/cuda-12.2
 ENV PATH=/usr/local/cuda-12.2/bin:${PATH}
-ENV LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:${LD_LIBRARY_PATH}
+#ENV LD_LIBRARY_PATH=/usr/local/cuda-12.2/lib64:${LD_LIBRARY_PATH}
 ENV LD_LIBRARY_PATH=/usr/local/cuda-12.2/targets/aarch64-linux/lib:${LD_LIBRARY_PATH}
 
 COPY . .
