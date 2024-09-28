@@ -1,11 +1,9 @@
-from transformers import GenerationMixin, GenerationConfig
 import torch
 
-class FlaxGeneration(GenerationMixin):
-    def __init__(self, model, generation_config):
+class FlaxGeneration():
+    def __init__(self, model):
         super().__init__()
         self.model = model
-        self.generation_config = generation_config
     
             
     @torch.no_grad()
@@ -13,7 +11,7 @@ class FlaxGeneration(GenerationMixin):
         self,
         input_ids_list,
         attention_mask_list,
-        generation_config,
+        max_new_tokens,
         logits_processor=None,
         stopping_criteria=None,
         synced_gpus=False,
@@ -22,7 +20,7 @@ class FlaxGeneration(GenerationMixin):
         ) :
         
         cnt = 0
-        while cnt < self.generation_config.max_length:
+        while cnt < max_new_tokens:
             outputs = self.model(input_ids_list,attention_mask_list)
             
             for i, output in enumerate(outputs['logit_list']):
@@ -44,9 +42,4 @@ class FlaxGeneration(GenerationMixin):
 
 
     
-
-class Cutstom_GenerationConfig():
-    def __init__(self, max_length, eos_token_id):
-        self.max_length = max_length
-        self.eos_token_id = eos_token_id
         

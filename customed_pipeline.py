@@ -3,7 +3,7 @@ from transformers import AutoTokenizer
 import json
 import time
 import gc
-from generation import CustomGeneration, Cutstom_GenerationConfig
+from generation import CustomGeneration
 torch.random.manual_seed(0)
 model_id = "microsoft/Phi-3-medium-4k-instruct"
 # model = AutoModelForCausalLM.from_pretrained(
@@ -19,7 +19,6 @@ class CustomedPipeline():
             self,
             model,
             config,
-            max_length,
             model_id = "microsoft/Phi-3-medium-4k-instruct",
             device = "cuda"
         ):
@@ -30,9 +29,7 @@ class CustomedPipeline():
         self.attention_mask = []
         self.device = device
         self.labels = []
-        self.max_length = max_length
-        self.gen_config = Cutstom_GenerationConfig(self.max_length, self.tokenizer.eos_token_id)
-        self.generate_cls =  CustomGeneration(self.model, self.gen_config)
+        self.generate_cls =  CustomGeneration(self.model)
 
     def batchify(self, data, batch_size):
         return [data[i:i + batch_size] for i in range(0, len(data), batch_size)]
@@ -93,7 +90,7 @@ class CustomedPipeline():
             inputs = batch[0].to(self.device)
             masks = batch[1].to(self.device)
            
-            generated_sequence = self.generate_cls.generate(input_ids=inputs, attention_mask=masks, generation_config=self.gen_config)
+            generated_sequence = self.generate_cls.generate(input_ids=inputs, attention_mask=masks, max_length=max_new_tokens)
  
             result.append(generated_sequence)
             end = time.time()
@@ -103,7 +100,6 @@ class CustomedPipeline():
             if cnt % 5 == 0:
                 gc.collect()
             break
-        print(result)
         print('total inference time ', times)
         return {"generated_sequence": result}
 
