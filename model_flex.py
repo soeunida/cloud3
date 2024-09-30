@@ -54,7 +54,7 @@ def _prepare_4d_causal_attention_mask_with_cache_position(
     return causal_mask
 @dataclass
 class CausalLMOutputWithPast(ModelOutput):
-    logits: torch.FloatTensor = None
+    logit_list : List
 
 class Phi3PreTrainedModel(PreTrainedModel):
     config_class = NewPhi3Config
@@ -92,7 +92,7 @@ class EmbedModel(nn.Module):
         self,
         input_ids: torch.LongTensor = None
     ):
-        self.load_weights()
+
         inputs_embeds = self.embed_tokens(input_ids)
 
         return inputs_embeds
@@ -179,7 +179,6 @@ class Body(Phi3PreTrainedModel):
         cache_position: Optional[torch.LongTensor] = None,
     ):
         
-        self.load_weights(idx)
         for decoder_layer in self.layers:
             
             layer_outputs = decoder_layer(
@@ -254,51 +253,59 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         file_num = 1
         self.load_one_file()
         embed_model = EmbedModel(self.config)
-        hidden_states = embed_model(input_ids)
+        embed_model.load_weights()
+        hidden_list = []
+        for inputs in input_ids:
+            hidden_list.append(embed_model(inputs))
 
         del embed_model
-
-        past_seen_tokens = 0
-        cache_position = torch.arange(
-                past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=device
-            )
         
-        if position_ids is None:
-            position_ids = cache_position.unsqueeze(0)
+        position_ids_list = []
+        cache_position_list = []
+        for hidden_states in hidden_list:
+            past_seen_tokens = 0
+            cache_position_list.append(torch.arange(
+                past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=device
+                ))
+            position_ids_list.append(cache_position_list[-1].unsqueeze(0))
         
         causal_mask = attention_mask
-
-      
         body = Body(self.config.block_size, self.config)
 
-        for idx in range(0, 40, self.config.block_size):
-            outputs = body(idx, hidden_states, causal_mask, position_ids, None, cache_position)
-            hidden_states = outputs
 
+        for idx in range(0, 40, self.config.block_size):
+            body.load_weights(idx)
+            for i, hidden_states in enumerate(hidden_list):
+                outputs = body(idx, hidden_states, causal_mask[i], position_ids_list[i], None, cache_position_list[i])
+                hidden_list[i] = outputs
+                del outputs
         del body
 
-        hidden_states = outputs
         self.load_weights()
-        hidden_states = self.norm(hidden_states)
-        logits = self.lm_head(hidden_states)
-        logits = logits.float()
+        logit_list = []
+        for hidden_states in hidden_list:
+            hidden_states = self.norm(hidden_states)
+            logits = self.lm_head(hidden_states)
+            logit_list.append(logits.float())
+            del logits
+            
+        del hidden_list
 
         print('forward')
 
         return CausalLMOutputWithPast(
-            logits=logits
-
+            logit_list=logit_list
         )
 
     # Copied from transformers.models.llama.modeling_llama.LlamaForCausalLM.prepare_inputs_for_generation
     def prepare_inputs_for_generation(
         self,
         input_ids,
-        attention_mask=None,
-        position_ids=None,
         past_key_values=None,
+        attention_mask=None,
         inputs_embeds=None,
         cache_position=None,
+        position_ids=None,
         use_cache=True,
         **kwargs,
     ):
@@ -310,7 +317,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
                 input_ids = input_ids[:, -cache_position.shape[0] :]
             elif input_ids.shape[1] != cache_position.shape[0]:  # Default case (the "else", a no op, is Exception 2)
                 input_ids = input_ids[:, cache_position]
-                
+
         if attention_mask is not None and position_ids is None:
             # create position_ids on the fly for batch generation
             position_ids = attention_mask.long().cumsum(-1) - 1
@@ -320,6 +327,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
 
                 # This `clone` call is needed to avoid recapturing cuda graphs with `torch.compile`'s  `mode="reduce-overhead`, as otherwise the input `position_ids` would have various stride during the decoding. Here, simply using `.contiguous()` is not sufficient as in the batch size = 1 case, `position_ids` is already contiguous but with varying stride which retriggers a capture.
                 position_ids = position_ids.clone(memory_format=torch.contiguous_format)
+
         # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
         if inputs_embeds is not None and cache_position[0] == 0:
             model_inputs = {"inputs_embeds": inputs_embeds, "input_ids": None}

@@ -3,6 +3,7 @@ from transformers import AutoTokenizer
 import json
 import time
 import gc
+from generation import CustomGeneration
 torch.random.manual_seed(0)
 model_id = "microsoft/Phi-3-medium-4k-instruct"
 # model = AutoModelForCausalLM.from_pretrained(
@@ -28,6 +29,7 @@ class CustomedPipeline():
         self.attention_mask = []
         self.device = device
         self.labels = []
+        self.generate_cls =  CustomGeneration(self.model)
 
     def batchify(self, data, batch_size):
         return [data[i:i + batch_size] for i in range(0, len(data), batch_size)]
@@ -87,8 +89,9 @@ class CustomedPipeline():
             st = time.time()
             inputs = batch[0].to(self.device)
             masks = batch[1].to(self.device)
-            #prompt_len = batch[0].shape[1]
-            generated_sequence = self.model.generate(input_ids=inputs, attention_mask=masks, max_new_tokens=max_new_tokens )
+           
+            generated_sequence = self.generate_cls.generate(input_ids=inputs, attention_mask=masks, max_length=max_new_tokens)
+ 
             result.append(generated_sequence)
             end = time.time()
             print('batch load and inference time ', end - st)
@@ -135,5 +138,3 @@ class CustomedPipeline():
 
         print('accuracy : ',correct/total)
         return result
-
-

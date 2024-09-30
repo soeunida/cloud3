@@ -1,8 +1,7 @@
 FROM python:3.10-slim
-FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0
+# FROM nvcr.io/nvidia/l4t-jetpack:r36.3.0
+FROM nvcr.io/nvidia/pytorch:24.09-py3-igpu
 
-
-#WORKDIR /home/hayoung/cloud
 
 COPY requirements.txt ./
 
@@ -11,11 +10,9 @@ RUN apt-get update &&  apt-get install -y git
 RUN set -xe && apt-get -yqq update && apt-get -yqq install python3-pip && pip3 install --upgrade pip
 
 
-#ENV TORCH_INSTALL="https://developer.download.nvidia.com/compute/redist/jp/v60dp/pytorch/torch-2.3.0a0+40ec155e58.nv24.03.13384722-cp310-cp310-linux_aarch64.whl"
-ENV TORCH_INSTALL="https://developer.download.nvidia.com/compute/redist/jp/v60dp/pytorch/torch-2.3.0a0+ebedce2.nv24.02-cp310-cp310-linux_aarch64.whl"
-RUN pip3 install --no-cache $TORCH_INSTALL
+# ENV TORCH_INSTALL="https://developer.download.nvidia.com/compute/redist/jp/v60dp/pytorch/torch-2.3.0a0+ebedce2.nv24.02-cp310-cp310-linux_aarch64.whl"
+# RUN pip3 install --no-cache $TORCH_INSTALL
 RUN apt-get install -y --no-install-recommends libopenmpi-dev libopenblas-base
-#ENV FLASH="https://static.abacus.ai/pypi/abacusai/gh200-llm/flash_attn-2.3.6-cp310-cp310-linux_aarch64.whl"
 ENV FLASH="http://jetson.webredirect.org/jp6/cu122/+f/b94/48fc2bf0a7532/flash_attn-2.5.7-cp310-cp310-linux_aarch64.whl"
 RUN pip3 install --no-cache $FLASH
 
@@ -30,4 +27,4 @@ ENV LD_LIBRARY_PATH=/usr/local/cuda-12.2/targets/aarch64-linux/lib:${LD_LIBRARY_
 
 COPY . .
 
-CMD  ["python3", "script_server.py"]
+CMD  ["python3", "script_base.py"]

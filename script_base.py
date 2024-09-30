@@ -6,7 +6,7 @@ from model2 import CustomedPhi3ForCausalLM
 import requests
 
 def download_model():
-    base_path = '/nas/user/hayoung'
+    base_path = '/home/acpl/model'
     
     for i in range(6):
         file_path = base_path + f'model-0000{i+1}-of-00006.safetensors'
@@ -25,11 +25,11 @@ def download_model():
 model_id = "microsoft/Phi-3-medium-4k-instruct"
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-config = NewPhi3Config(base_path='/nas/user/hayoung')
+config = NewPhi3Config(base_path='/home/acpl/model')
 model = CustomedPhi3ForCausalLM(config)
 
 pipe = CustomedPipeline(model, config)
-pipe.load_data(file_path= "./test.jsonl", batch_size=30)
+pipe.load_data(file_path= "./test.jsonl", batch_size=3)
 outputs = pipe.forward(max_new_tokens=15)
 result = pipe.postprocess(outputs)
 print(result)

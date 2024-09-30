@@ -85,12 +85,12 @@ class Phi3RotaryEmbedding(nn.Module):
 
     @torch.no_grad()
     def forward(self, x, position_ids, seq_len=None):
+
         # x: [bs, num_attention_heads, seq_len, head_size]
         self.inv_freq.to(x.device)
         inv_freq_expanded = self.inv_freq[None, :, None].float().expand(position_ids.shape[0], -1, 1)
         position_ids_expanded = position_ids[:, None, :].float()
-        # Force float32 since bfloat16 loses precision on long contexts
-        # See https://github.com/huggingface/transformers/pull/29285
+
         device_type = x.device.type
         device_type = device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
         with torch.autocast(device_type=device_type, enabled=False):
@@ -103,7 +103,6 @@ class Phi3RotaryEmbedding(nn.Module):
 
 
 
-# Copied from transformers.models.llama.modeling_llama.rotate_half
 def rotate_half(x):
     """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
@@ -111,11 +110,11 @@ def rotate_half(x):
     return torch.cat((-x2, x1), dim=-1)
 
 
-# Copied from transformers.models.llama.modeling_llama.apply_rotary_pos_emb
 def apply_rotary_pos_emb(q, k, cos, sin, position_ids=None, unsqueeze_dim=1):
     
     cos = cos.unsqueeze(unsqueeze_dim)
     sin = sin.unsqueeze(unsqueeze_dim)
+
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
@@ -275,19 +274,11 @@ class Phi3Attention(nn.Module):
 
 
 class Phi3FlashAttention2(Phi3Attention):
-    """
-    Phi-3 flash attention module. This module inherits from `Phi3Attention` as the weights of the module stays
-    untouched. The only required change would be on the forward pass where it needs to correctly call the public API of
-    flash attention and deal with padding tokens in case the input contains any of them.
-    """
-
-    # Copied from transformers.models.llama.modeling_llama.LlamaFlashAttention2.__init__
+   
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-        # TODO: Should be removed once Flash Attention for RoCm is bumped to 2.1.
-        # flash_attn<2.1 generates top-left aligned causal mask, while what is needed here is bottom-right alignement, that was made default for flash_attn>=2.1. This attribute is used to handle this difference. Reference: https://github.com/Dao-AILab/flash-attention/releases/tag/v2.1.0.
-        # Beware that with flash_attn<2.1, using q_seqlen != k_seqlen (except for the case q_seqlen == 1) produces a wrong mask (top-left).
+       
         self._flash_attn_uses_top_left_mask = not is_flash_attn_greater_or_equal_2_10()
 
     def get_unpad_data(self, attention_mask: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, int]:
@@ -349,9 +340,9 @@ class Phi3FlashAttention2(Phi3Attention):
         output_attentions = False
 
         bsz, q_len, _ = hidden_states.size()
-
+        torch.cuda.nvtx.range_push(f"linear ")
         qkv = self.qkv_proj(hidden_states)
-      
+        torch.cuda.nvtx.range_pop()
         query_pos = self.num_heads * self.head_dim
         query_states = qkv[..., :query_pos]
         key_states = qkv[..., query_pos : query_pos + self.num_key_value_heads * self.head_dim]
@@ -374,12 +365,15 @@ class Phi3FlashAttention2(Phi3Attention):
                 )
             kv_seq_len += past_key_value.get_usable_length(kv_seq_len, self.layer_idx)
 
+
         # Because the input can be padded, the absolute sequence length depends on the max position id.
         rotary_seq_len = (
             max(kv_seq_len, position_ids[:, -1].max().item() + 1) if position_ids is not None else kv_seq_len
         )
 
+
         cos, sin = self.rotary_emb(value_states, seq_len=rotary_seq_len, position_ids=position_ids)
+      
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
@@ -421,7 +415,7 @@ class Phi3FlashAttention2(Phi3Attention):
             value_states = value_states.to(target_dtype)
             
         
-        
+        torch.cuda.nvtx.range_push(f"flash attn ")
         attn_output_unpad = flash_attn_varlen_func(
                                     query_states,
                                     key_states,
@@ -440,11 +434,12 @@ class Phi3FlashAttention2(Phi3Attention):
                                     return_attn_probs=False,
                                     block_table=None,
                                 )
-        
+ 
         attn_output = pad_input(attn_output_unpad, indices_q, batch_size, q_len)
         
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
         attn_output = attn_output.to(torch.float32)
+
         attn_output = self.o_proj(attn_output)
         if not output_attentions:
             attn_weights = None
@@ -476,34 +471,13 @@ class Phi3DecoderLayer(nn.Module):
         cache_position: Optional[torch.LongTensor] = None,
         **kwargs,
     ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
-        """
-        Args:
-            hidden_states (`torch.FloatTensor`):
-                input to the layer of shape `(batch, seq_len, embed_dim)`
-            attention_mask (`torch.FloatTensor`, *optional*): attention mask of size
-                `(batch, 1, tgt_len, src_len)` where padding elements are indicated by very large negative values.
-            position_ids (`torch.LongTensor` of shape `({0})`, *optional*):
-                Indices of positions of each input sequence tokens in the position embeddings. Selected in the range
-                `[0, config.n_positions - 1]`. [What are position IDs?](../glossary#position-ids)
-            output_attentions (`bool`, *optional*):
-                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
-                returned tensors for more detail.
-            use_cache (`bool`, *optional*):
-                If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding
-                (see `past_key_values`).
-            past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
-            cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
-                Indices depicting the position of the input sequence tokens in the sequence
-            kwargs (`dict`, *optional*):
-                Arbitrary kwargs to be ignored, used for FSDP and other methods that injects code
-                into the model
-        """
+       
 
         residual = hidden_states
 
+
         hidden_states = self.input_layernorm(hidden_states)
 
-        # Self Attention
         attn_outputs, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -532,27 +506,8 @@ class Phi3DecoderLayer(nn.Module):
         return outputs
 
 
-PHI3_START_DOCSTRING = r"""
-    This model inherits from [`PreTrainedModel`]. Check the superclass documentation for the generic methods the
-    library implements for all its model (such as downloading or saving, resizing the input embeddings, pruning heads
-    etc.)
-
-    This model is also a PyTorch [torch.nn.Module](https://pytorch.org/docs/stable/nn.html#torch.nn.Module) subclass.
-    Use it as a regular PyTorch Module and refer to the PyTorch documentation for all matter related to general usage
-    and behavior.
-
-    Parameters:
-        config ([`Phi3Config`]):
-            Model configuration class with all the parameters of the model. Initializing with a config file does not
-            load the weights associated with the model, only the configuration. Check out the
-            [`~PreTrainedModel.from_pretrained`] method to load the model weights.
-"""
 
 
-@add_start_docstrings(
-    "The bare Phi-3 model outputting raw hidden-states without any specific head on top.",
-    PHI3_START_DOCSTRING,
-)
 class Phi3PreTrainedModel(PreTrainedModel):
     config_class = Phi3Config
     base_model_prefix = "model"
