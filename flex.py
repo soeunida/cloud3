@@ -3,7 +3,7 @@ from transformers import AutoTokenizer
 import time
 import json
 import gc
-from flex_gen import FlaxGeneration, Cutstom_GenerationConfig
+from flex_gen import FlaxGeneration
 torch.random.manual_seed(0)
 model_id = "microsoft/Phi-3-medium-4k-instruct"
 # model = AutoModelForCausalLM.from_pretrained(
@@ -31,7 +31,7 @@ class CustomedPipeline():
         self.device = device
         self.labels = []
         self.max_length = max_length
-        self.generate_cls =  FlaxGeneration(self.model, self.gen_config)
+        self.generate_cls =  FlaxGeneration(self.model)
     
     def outer_batchify(self, batches, o_batch_size):
         outer = []
