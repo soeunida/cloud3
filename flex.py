@@ -31,7 +31,6 @@ class CustomedPipeline():
         self.device = device
         self.labels = []
         self.max_length = max_length
-        self.gen_config = Cutstom_GenerationConfig(self.max_length, self.tokenizer.eos_token_id)
         self.generate_cls =  FlaxGeneration(self.model, self.gen_config)
     
     def outer_batchify(self, batches, o_batch_size):
@@ -93,7 +92,7 @@ class CustomedPipeline():
             masks = [batch.to(self.device) for batch in batch[1]]
             torch.cuda.nvtx.range_pop()
             st = time.time()
-            outs = self.generate_cls.generate(input_ids_list=inputs, attention_mask_list=masks, generation_config=self.gen_config)
+            outs = self.generate_cls.generate(input_ids_list=inputs, attention_mask_list=masks, max_length=max_new_tokens)
             print(outs)
             for out in outs:
                 result.append(out)
