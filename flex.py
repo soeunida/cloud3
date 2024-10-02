@@ -19,7 +19,6 @@ class CustomedPipeline():
             self,
             model,
             config,
-            max_length,
             model_id = "microsoft/Phi-3-medium-4k-instruct",
             device = "cuda"
         ):
@@ -30,12 +29,15 @@ class CustomedPipeline():
         self.attention_mask = []
         self.device = device
         self.labels = []
-        self.max_length = max_length
         self.generate_cls =  FlaxGeneration(self.model)
+        self.o_batch_size = 0
+        self.i_batch_size = 0
+        
     
     def outer_batchify(self, batches, o_batch_size):
         outer = []
         for i in range(0, len(batches), o_batch_size):
+            print()
             outer.append(batches[i:i+o_batch_size])
     
         return outer
@@ -55,29 +57,26 @@ class CustomedPipeline():
         self.labels = [inputs['answer'] for inputs in model_inputs]
         batches = self.batchify(messages, i_batch_size)
         outer_batches = self.outer_batchify(batches, o_batch_size)
-        tokenized_batches = [
-        [
-            self.tokenizer.apply_chat_template(inner_batch,
-                                               tokenize=True,
-                                               padding=True,
-                                               truncation=True,
-                                               return_tensors="pt",
-                                               return_dict=True)
-            for inner_batch in outer_batch
-        ]
-        for outer_batch in outer_batches
-        ]
-    
-  
-        for outer_batch in tokenized_batches:
+        
+        for outer_batch in outer_batches:
             inner_batch = []
             inner_batch_m = []
-            for token in outer_batch:
+            
+            tokenized = [self.tokenizer.apply_chat_template(inner, 
+                                                tokenize=True, 
+                                                padding=True, 
+                                                truncation=True,
+                                                return_tensors="pt", 
+                                                return_dict=True) for inner in outer_batch]
+                
+            for token in tokenized:
                 inner_batch.append(token['input_ids'])
                 inner_batch_m.append(token['attention_mask'])
             self.input_ids.append(inner_batch)
             self.attention_mask.append(inner_batch_m)
-
+            
+        self.o_batch_size = o_batch_size
+        self.i_batch_size = i_batch_size
         # self.input_ids = [token['input_ids'] for token in outer_batch for outer_batch in tokenized_batches]
         # self.attention_mask = [[token['attention_mask'] for token in outer_batch] for outer_batch in tokenized_batches]
   
@@ -87,21 +86,21 @@ class CustomedPipeline():
         cnt = 0
         self.model.eval()
         for batch in zip(self.input_ids, self.attention_mask):
-            torch.cuda.nvtx.range_push(f" input attention mask 이동 ")
+            st = time.time()
             inputs = [batch.to(self.device) for batch in batch[0]]
             masks = [batch.to(self.device) for batch in batch[1]]
-            torch.cuda.nvtx.range_pop()
-            st = time.time()
-            outs = self.generate_cls.generate(input_ids_list=inputs, attention_mask_list=masks, max_length=max_new_tokens)
-            print(outs)
+            
+            outs = self.generate_cls.generate(input_ids_list=inputs, attention_mask_list=masks, max_new_tokens=max_new_tokens)
+
             for out in outs:
                 result.append(out)
+                tmp = self.tokenizer.batch_decode(out)
             end = time.time()
             
-            print('batch load and inference time ', end - st)
+            print('batch load and inference time ', (end - st))
+            print('inference time per item ',(end-st)/(self.o_batch_size*self.i_batch_size))
             times += end - st
             cnt += 1
-            break
             if cnt % 5 == 0:
                 gc.collect()
         print('total inference time ', times)
@@ -127,18 +126,18 @@ class CustomedPipeline():
         result = []
         correct = 0
         i = 0
-        for batch_outputs in model_outputs['generated_sequence']:
-            for outputs in batch_outputs:
-                answer = self.find_pattern(outputs)
+        for outputs in model_outputs['generated_sequence']:   
+            for text in outputs:
+                answer = self.find_pattern(text)
                 decoded_answer = self.tokenizer.decode(answer)
                 if self.labels[i] in decoded_answer:
                     correct += 1
                 else:
-                    decoded_answer = self.tokenizer.decode(outputs[91:])
+                    decoded_answer = self.tokenizer.decode(text[91:])
                 result.append([{'generated':decoded_answer, 'label' : self.labels[i]}])
                 i += 1
 
-        total = len(self.labels)
+        total = i
         print('맞은 개수', correct)
         print('총 개수 ',total)
 
