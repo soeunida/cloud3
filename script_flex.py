@@ -31,8 +31,7 @@ model = CustomedPhi3ForCausalLM(config)
 
 pipe = CustomedPipeline(model, config)
 pipe.load_data(file_path= "/home/hayoung/ss/data.jsonl", o_batch_size=8, i_batch_size=20)
-outputs = pipe.forward(max_new_tokens=15)
+outputs = pipe.forward(max_new_tokens=10)
 result = pipe.postprocess(outputs)
-print(result)
 
  

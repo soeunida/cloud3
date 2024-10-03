@@ -7,7 +7,7 @@ from transformers import PreTrainedModel, Phi3Config
 from transformers.utils import ModelOutput
 from safetensors import safe_open
 import json
-from hf_ref import (
+from hf_ref_tri import (
     _prepare_4d_causal_attention_mask_with_cache_position,
     Phi3RMSNorm,
     Phi3DecoderLayer,
@@ -54,7 +54,7 @@ def _prepare_4d_causal_attention_mask_with_cache_position(
     return causal_mask
 @dataclass
 class CausalLMOutputWithPast(ModelOutput):
-    logit_list : List
+    logits: torch.FloatTensor = None
 
 class Phi3PreTrainedModel(PreTrainedModel):
     config_class = NewPhi3Config
@@ -92,7 +92,7 @@ class EmbedModel(nn.Module):
         self,
         input_ids: torch.LongTensor = None
     ):
-
+        self.load_weights()
         inputs_embeds = self.embed_tokens(input_ids)
 
         return inputs_embeds
@@ -179,6 +179,7 @@ class Body(Phi3PreTrainedModel):
         cache_position: Optional[torch.LongTensor] = None,
     ):
         
+        self.load_weights(idx)
         for decoder_layer in self.layers:
             
             layer_outputs = decoder_layer(
@@ -253,109 +254,67 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         file_num = 1
         self.load_one_file()
         embed_model = EmbedModel(self.config)
-        embed_model.load_weights()
-        hidden_list = []
-        for inputs in input_ids:
-            hidden_list.append(embed_model(inputs))
+        hidden_states = embed_model(input_ids)
 
         del embed_model
-        
-        position_ids_list = []
-        cache_position_list = []
-        for hidden_states in hidden_list:
-            past_seen_tokens = 0
-            cache_position_list.append(torch.arange(
+
+        past_seen_tokens = 0
+        cache_position = torch.arange(
                 past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=device
-                ))
-            position_ids_list.append(cache_position_list[-1].unsqueeze(0))
+            )
         
-        causal_mask = attention_mask
+        if position_ids is None:
+            position_ids = cache_position.unsqueeze(0)
+        
+        causal_mask = self._prepare_4d_causal_attention_mask_with_cache_position(
+            attention_mask=attention_mask,
+            sequence_length=input_ids.shape[1],
+            target_length=input_ids.shape[1],
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+            cache_position=cache_position,
+            batch_size=input_ids.shape[0],
+        )
+        
+        
+      
         body = Body(self.config.block_size, self.config)
 
-
         for idx in range(0, 40, self.config.block_size):
-            body.load_weights(idx)
-            for i, hidden_states in enumerate(hidden_list):
-                outputs = body(idx, hidden_states, causal_mask[i], position_ids_list[i], None, cache_position_list[i])
-                hidden_list[i] = outputs
-                del outputs
+            outputs = body(idx, hidden_states, causal_mask, position_ids, None, cache_position)
+            hidden_states = outputs
+
         del body
 
+        hidden_states = outputs
         self.load_weights()
-        logit_list = []
-        for hidden_states in hidden_list:
-            hidden_states = self.norm(hidden_states)
-            logits = self.lm_head(hidden_states)
-            logit_list.append(logits.float())
-            del logits
-            
-        del hidden_list
+        hidden_states = self.norm(hidden_states)
+        logits = self.lm_head(hidden_states)
+        logits = logits.float()
 
         print('forward')
 
         return CausalLMOutputWithPast(
-            logit_list=logit_list
+            logits=logits
+
         )
 
     # Copied from transformers.models.llama.modeling_llama.LlamaForCausalLM.prepare_inputs_for_generation
     def prepare_inputs_for_generation(
         self,
         input_ids,
-        past_key_values=None,
         attention_mask=None,
+        position_ids=None,
+        past_key_values=None,
         inputs_embeds=None,
         cache_position=None,
-        position_ids=None,
         use_cache=True,
         **kwargs,
     ):
         # If we have cache: let's slice `input_ids` through `cache_position`, to keep only the unprocessed tokens
         # Exception 1: when passing input_embeds, input_ids may be missing entries
         # Exception 2: some generation methods do special slicing of input_ids, so we don't need to do it here
-        if past_key_values is not None:
-            if inputs_embeds is not None:  # Exception 1
-                input_ids = input_ids[:, -cache_position.shape[0] :]
-            elif input_ids.shape[1] != cache_position.shape[0]:  # Default case (the "else", a no op, is Exception 2)
-                input_ids = input_ids[:, cache_position]
-
-        if attention_mask is not None and position_ids is None:
-            # create position_ids on the fly for batch generation
-            position_ids = attention_mask.long().cumsum(-1) - 1
-            position_ids.masked_fill_(attention_mask == 0, 1)
-            if past_key_values:
-                position_ids = position_ids[:, -input_ids.shape[1] :]
-
-                # This `clone` call is needed to avoid recapturing cuda graphs with `torch.compile`'s  `mode="reduce-overhead`, as otherwise the input `position_ids` would have various stride during the decoding. Here, simply using `.contiguous()` is not sufficient as in the batch size = 1 case, `position_ids` is already contiguous but with varying stride which retriggers a capture.
-                position_ids = position_ids.clone(memory_format=torch.contiguous_format)
-
-        # if `inputs_embeds` are passed, we only want to use them in the 1st generation step
-        if inputs_embeds is not None and cache_position[0] == 0:
-            model_inputs = {"inputs_embeds": inputs_embeds, "input_ids": None}
-        else:
-            # The clone here is for the same reason as for `position_ids`.
-            model_inputs = {"input_ids": input_ids.clone(memory_format=torch.contiguous_format), "inputs_embeds": None}
-
-        if isinstance(past_key_values, StaticCache) and attention_mask.ndim == 2:
-            if model_inputs["inputs_embeds"] is not None:
-                batch_size, sequence_length, _ = model_inputs["inputs_embeds"].shape
-                device = model_inputs["inputs_embeds"].device
-            else:
-                batch_size, sequence_length = model_inputs["input_ids"].shape
-                device = model_inputs["input_ids"].device
-
-            dtype = self.lm_head.weight.dtype
-            min_dtype = torch.finfo(dtype).min
-
-            attention_mask = _prepare_4d_causal_attention_mask_with_cache_position(
-                attention_mask,
-                sequence_length=sequence_length,
-                target_length=past_key_values.get_max_length(),
-                dtype=dtype,
-                device=device,
-                min_dtype=min_dtype,
-                cache_position=cache_position,
-                batch_size=batch_size,
-            )
+        
 
         model_inputs.update(
             {
@@ -368,47 +327,35 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         )
         return model_inputs
     
-    def _update_causal_mask(
+    
+    def _prepare_4d_causal_attention_mask_with_cache_position(
         self,
         attention_mask: torch.Tensor,
-        input_tensor: torch.Tensor,
+        sequence_length: int,
+        target_length: int,
+        dtype: torch.dtype,
+        device: torch.device,
         cache_position: torch.Tensor,
-        past_key_values =None,
-        output_attentions= False,
+        batch_size: int,
     ):
 
-        if self.config._attn_implementation == "flash_attention_2":
-            if attention_mask is not None and 0.0 in attention_mask:
-                return attention_mask
-            return None
-
-        # For SDPA, when possible, we will rely on its `is_causal` argument instead of its `attn_mask` argument, in
-        # order to dispatch on Flash Attention 2. This feature is not compatible with static cache, as SDPA will fail
-        # to infer the attention mask.
-        past_seen_tokens =  0
-
-        dtype, device = input_tensor.dtype, input_tensor.device
-        min_dtype = torch.finfo(dtype).min
-        sequence_length = input_tensor.shape[1]
-        target_length = (
-                attention_mask.shape[-1]
-            )
-
-        # In case the provided `attention` mask is 2D, we generate a causal mask here (4D).
-        causal_mask = _prepare_4d_causal_attention_mask_with_cache_position(
-            attention_mask,
-            sequence_length=sequence_length,
-            target_length=target_length,
-            dtype=dtype,
-            device=device,
-            min_dtype=min_dtype,
-            cache_position=cache_position,
-            batch_size=input_tensor.shape[0],
-        )
-
-
+        if attention_mask is not None and attention_mask.dim() == 4:
+            # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
+            causal_mask = attention_mask
+        else:
+            causal_mask = torch.ones(size=(sequence_length, target_length), dtype=dtype, device=device)
+            if sequence_length != 1:
+                causal_mask = torch.triu(causal_mask, diagonal=1)
+            #causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
+            causal_mask = causal_mask[None, None, :, :].expand(batch_size, 1, -1, -1)
+            if attention_mask is not None:
+                causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
+                mask_length = attention_mask.shape[-1]
+                padding_mask = (causal_mask[:, :, :, :mask_length]==0) | (attention_mask[:, None, None, :]==0)
+                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
+                    padding_mask, 0
+                )
+                
         return causal_mask
-    
-    
 
     
