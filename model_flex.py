@@ -8,7 +8,6 @@ from transformers.utils import ModelOutput
 from safetensors import safe_open
 import json
 from hf_ref import (
-    _prepare_4d_causal_attention_mask_with_cache_position,
     Phi3RMSNorm,
     Phi3DecoderLayer,
     NewPhi3Config
@@ -29,7 +28,7 @@ def _prepare_4d_causal_attention_mask_with_cache_position(
     target_length: int,
     dtype: torch.dtype,
     device: torch.device,
-    min_dtype: float,
+    min_dtype: int,
     cache_position: torch.Tensor,
     batch_size: int,
 ):
@@ -237,7 +236,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
     def forward(
         self,
         input_ids: torch.LongTensor = None,
-        attention_mask: Optional[torch.Tensor] = None,
+        attention_mask_list: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         inputs_embeds: Optional[torch.FloatTensor] = None,
@@ -262,21 +261,31 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         
         position_ids_list = []
         cache_position_list = []
-        for hidden_states in hidden_list:
+        causal_mask_list = []
+        for i, hidden_states in enumerate(hidden_list):
             past_seen_tokens = 0
             cache_position_list.append(torch.arange(
                 past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=device
                 ))
-            position_ids_list.append(cache_position_list[-1].unsqueeze(0))
-        
-        causal_mask = attention_mask
+            position_ids_list.append(cache_position_list[-1].unsqueeze(0))        
+            causal_mask_list.append(_prepare_4d_causal_attention_mask_with_cache_position(
+                                            attention_mask=attention_mask_list[i],
+                                            sequence_length=input_ids[i].shape[1],
+                                            target_length=input_ids[i].shape[1],
+                                            dtype=input_ids[i].dtype,
+                                            device=input_ids[i].device,
+                                            min_dtype = torch.iinfo(torch.int32).min,
+                                            cache_position=cache_position_list[i],
+                                            batch_size=input_ids[i].shape[0],
+                                            ))
+            
         body = Body(self.config.block_size, self.config)
 
 
         for idx in range(0, 40, self.config.block_size):
             body.load_weights(idx)
             for i, hidden_states in enumerate(hidden_list):
-                outputs = body(idx, hidden_states, causal_mask[i], position_ids_list[i], None, cache_position_list[i])
+                outputs = body(idx, hidden_states, causal_mask_list[i], position_ids_list[i], None, cache_position_list[i])
                 hidden_list[i] = outputs
                 del outputs
         del body

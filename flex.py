@@ -37,7 +37,6 @@ class CustomedPipeline():
     def outer_batchify(self, batches, o_batch_size):
         outer = []
         for i in range(0, len(batches), o_batch_size):
-            print()
             outer.append(batches[i:i+o_batch_size])
     
         return outer

@@ -22,7 +22,6 @@ class FlaxGeneration():
         cnt = 0
         while cnt < max_new_tokens:
             outputs = self.model(input_ids_list,attention_mask_list)
-            
             for i, output in enumerate(outputs['logit_list']):
                 next_token_logits = output.clone()[:, -1, :].float()/0.7
             
