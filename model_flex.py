@@ -14,7 +14,7 @@ from hf_ref import (
 )
 from transformers.cache_utils import StaticCache
 
-device = torch.device('cuda')
+device = torch.device('cuda:0')
 
 pre_weight_map = {}
 file_num = 1
