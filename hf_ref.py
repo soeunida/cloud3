@@ -452,6 +452,7 @@ class Phi3DecoderLayer(nn.Module):
 
         hidden_states = self.input_layernorm(hidden_states)
 
+        torch.cuda.nvtx.range_push("Attention start compute ")
         attn_outputs, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -461,12 +462,15 @@ class Phi3DecoderLayer(nn.Module):
             use_cache=use_cache,
             cache_position=cache_position,
         )
+        torch.cuda.nvtx.range_pop()
 
         hidden_states = residual + self.resid_attn_dropout(attn_outputs)
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
+        torch.cuda.nvtx.range_push("mlp  start compute ")
         hidden_states = self.mlp(hidden_states)
+        torch.cuda.nvtx.range_pop()
         hidden_states = residual + self.resid_mlp_dropout(hidden_states)
 
         outputs = (hidden_states,)

@@ -8,7 +8,6 @@ from transformers.utils import ModelOutput
 from safetensors import safe_open
 import json
 from hf_ref import (
-    _prepare_4d_causal_attention_mask_with_cache_position,
     Phi3RMSNorm,
     Phi3DecoderLayer,
     NewPhi3Config
@@ -23,35 +22,6 @@ tensor_dict = {}
     
     
 
-def _prepare_4d_causal_attention_mask_with_cache_position(
-    attention_mask: torch.Tensor,
-    sequence_length: int,
-    target_length: int,
-    dtype: torch.dtype,
-    device: torch.device,
-    min_dtype: float,
-    cache_position: torch.Tensor,
-    batch_size: int,
-):
-    if attention_mask is not None and attention_mask.dim() == 4:
-        # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
-        causal_mask = attention_mask
-    else:
-        causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
-        if sequence_length != 1:
-            causal_mask = torch.triu(causal_mask, diagonal=1)
-        causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
-        causal_mask = causal_mask[None, None, :, :].expand(batch_size, 1, -1, -1)
-        if attention_mask is not None:
-            causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
-            mask_length = attention_mask.shape[-1]
-            padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
-            padding_mask = padding_mask == 0
-            causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
-                padding_mask, min_dtype
-            )
-
-    return causal_mask
 @dataclass
 class CausalLMOutputWithPast(ModelOutput):
     logits: torch.FloatTensor = None
@@ -178,10 +148,11 @@ class Body(Phi3PreTrainedModel):
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ):
-        
+        torch.cuda.nvtx.range_push("웨잇 로드")
         self.load_weights(idx)
+        torch.cuda.nvtx.range_pop()
         for decoder_layer in self.layers:
-            
+            torch.cuda.nvtx.range_push(f"decoder compute")
             layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=causal_mask,
@@ -191,7 +162,7 @@ class Body(Phi3PreTrainedModel):
                     output_attentions=None,
                     use_cache=False
                 )
-
+            torch.cuda.nvtx.range_pop()
             hidden_states = layer_outputs[0]
 
         return hidden_states
@@ -224,15 +195,15 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
     def load_one_file(self):
     
         global file_num
-        
+
         if file_num > 6:
             print("파일 번호가 6번을 넘어감")
         file_path = self.config.base_path + f'/model-0000{file_num}-of-00006.safetensors'
-        
+        torch.cuda.nvtx.range_push(f"{file_num}번째 파일 오픈")
         with safe_open(file_path, framework="pt", device="cuda") as f:
             for key in f.keys():
                 tensor_dict[key] = f.get_tensor(key)
-        
+        torch.cuda.nvtx.range_pop()
         file_num += 1
         
     def forward(
@@ -249,11 +220,14 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-
+        torch.cuda.nvtx.range_push(" 포워ㅗ드 시작 ")
         global file_num
         file_num = 1
+
         self.load_one_file()
+        torch.cuda.nvtx.range_push("embedding load ")
         embed_model = EmbedModel(self.config)
+        torch.cuda.nvtx.range_pop()
         hidden_states = embed_model(input_ids)
 
         del embed_model
@@ -265,12 +239,20 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         
         if position_ids is None:
             position_ids = cache_position.unsqueeze(0)
+
+        causal_mask = self._prepare_4d_causal_attention_mask_with_cache_position(
+            attention_mask=attention_mask,
+            sequence_length=input_ids.shape[1],
+            target_length=input_ids.shape[1],
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+            cache_position=cache_position,
+            batch_size=input_ids.shape[0],
+        )
         
-        causal_mask = attention_mask
-
-      
+        torch.cuda.nvtx.range_push("body load ")
         body = Body(self.config.block_size, self.config)
-
+        torch.cuda.nvtx.range_pop()
         for idx in range(0, 40, self.config.block_size):
             outputs = body(idx, hidden_states, causal_mask, position_ids, None, cache_position)
             hidden_states = outputs
@@ -278,13 +260,17 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         del body
 
         hidden_states = outputs
+        torch.cuda.nvtx.range_push("lm 헤드 웨잇 로드")
         self.load_weights()
+        torch.cuda.nvtx.range_pop()
+        torch.cuda.nvtx.range_push("lm 헤드 compute")
         hidden_states = self.norm(hidden_states)
         logits = self.lm_head(hidden_states)
+        torch.cuda.nvtx.range_pop()
         logits = logits.float()
 
         print('forward')
-
+        torch.cuda.nvtx.range_pop()
         return CausalLMOutputWithPast(
             logits=logits
 
@@ -344,7 +330,6 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
                 target_length=past_key_values.get_max_length(),
                 dtype=dtype,
                 device=device,
-                min_dtype=min_dtype,
                 cache_position=cache_position,
                 batch_size=batch_size,
             )
@@ -393,7 +378,6 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
             target_length=target_length,
             dtype=dtype,
             device=device,
-            min_dtype=min_dtype,
             cache_position=cache_position,
             batch_size=input_tensor.shape[0],
         )
@@ -401,6 +385,33 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
 
         return causal_mask
     
-    
+    def _prepare_4d_causal_attention_mask_with_cache_position(
+        self,
+        attention_mask: torch.Tensor,
+        sequence_length: int,
+        target_length: int,
+        dtype: torch.dtype,
+        device: torch.device,
+        cache_position: torch.Tensor,
+        batch_size: int,
+    ):
+        print(f"sequence_length: {sequence_length}")
+        if attention_mask is not None and attention_mask.dim() == 4:
+            # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
+            causal_mask = attention_mask
+        else:
+            causal_mask = torch.full(size=(sequence_length, target_length), fill_value=0, dtype=dtype, device=device)
+            if sequence_length != 1:
+                causal_mask = torch.triu(causal_mask, diagonal=1)
+            causal_mask *= torch.arange(target_length, device=device) > cache_position.reshape(-1, 1)
+            causal_mask = causal_mask[None, None, :, :].expand(batch_size, 1, -1, -1)
+            if attention_mask is not None:
+                causal_mask = causal_mask.clone()  # copy to contiguous memory for in-place edit
+                mask_length = attention_mask.shape[-1]
+                padding_mask = causal_mask[:, :, :, :mask_length] + attention_mask[:, None, None, :]
+                padding_mask = padding_mask == 0
+                causal_mask[:, :, :, :mask_length] = causal_mask[:, :, :, :mask_length].masked_fill(
+                    padding_mask, 0
+                )
 
-    
+        return causal_mask
