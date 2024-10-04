@@ -1,6 +1,5 @@
 import torch
 from transformers import AutoTokenizer
-import torch
 from flex import CustomedPipeline
 from hf_ref import NewPhi3Config
 from model_flex import CustomedPhi3ForCausalLM
