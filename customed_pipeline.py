@@ -95,11 +95,11 @@ class CustomedPipeline():
             result.append(generated_sequence)
             end = time.time()
             print('batch load and inference time ', end - st)
+            print('batch load and inference time per item', (end - st) / (inputs.shape[0]))
             times += end - st
             cnt += 1
             if cnt % 5 == 0:
                 gc.collect()
-            break
         print('total inference time ', times)
         return {"generated_sequence": result}
 
@@ -128,11 +128,12 @@ class CustomedPipeline():
                 decoded_answer = self.tokenizer.decode(answer)
                 if self.labels[i] in decoded_answer:
                     correct += 1
+                    result.append([{'correct':decoded_answer, 'label' : self.labels[i]}])
                 else:
                     decoded_answer = self.tokenizer.decode(text[91:])
                     result.append([{'wrong':decoded_answer, 'label' : self.labels[i]}])
         
-        total = len(model_outputs) * len(outputs)
+        total = len(self.labels)
         print('맞은 개수', correct)
         print('총 개수 ',len(self.labels))
 
