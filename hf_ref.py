@@ -7,7 +7,7 @@ import torch
 import torch.utils.checkpoint
 from torch import nn
 
-from transformers import PreTrainedModel, Cache, PretrainedConfig, Phi3Config
+from transformers import PreTrainedModel, PretrainedConfig, Phi3Config
 from transformers.activations import ACT2FN 
 import torch.nn.functional as F
 from transformers.utils import (
@@ -23,9 +23,6 @@ from flash_attn.bert_padding import pad_input, index_first_axis
 
 class Phi3RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
-        """
-        Phi3RMSNorm is equivalent to T5LayerNorm
-        """
         super().__init__()
         self.weight = nn.Parameter(torch.ones(hidden_size))
         self.variance_epsilon = eps
@@ -74,7 +71,6 @@ class Phi3RotaryEmbedding(nn.Module):
 
 
 def rotate_half(x):
-    """Rotates half the hidden dims of the input."""
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     return torch.cat((-x2, x1), dim=-1)
@@ -108,12 +104,8 @@ class Phi3MLP(nn.Module):
         return down_states
 
 
-# Copied from transformers.models.llama.modeling_llama.repeat_kv with llama->phi
 def repeat_kv(hidden_states: torch.Tensor, n_rep: int) -> torch.Tensor:
-    """
-    This is the equivalent of torch.repeat_interleave(x, dim=1, repeats=n_rep). The hidden states go from (batch,
-    num_key_value_heads, seqlen, head_dim) to (batch, num_attention_heads, seqlen, head_dim)
-    """
+    
     batch, num_key_value_heads, slen, head_dim = hidden_states.shape
     if n_rep == 1:
         return hidden_states
@@ -157,7 +149,7 @@ class Phi3Attention(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_value: Optional = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -290,7 +282,7 @@ class Phi3FlashAttention2(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.LongTensor] = None,
         position_ids: Optional[torch.LongTensor] = None,
-        past_key_value: Optional[Cache] = None,
+        past_key_value: Optional = None,
         output_attentions: bool = False,
         use_cache: bool = False,
         cache_position: Optional[torch.LongTensor] = None,
@@ -308,9 +300,7 @@ class Phi3FlashAttention2(nn.Module):
         key_states = qkv[..., query_pos : query_pos + self.num_key_value_heads * self.head_dim]
         value_states = qkv[..., query_pos + self.num_key_value_heads * self.head_dim :]
 
-        # Flash attention requires the input to have the shape
-        # batch_size x seq_length x head_dim x hidden_dim
-        # therefore we just need to keep the original shape
+        
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
@@ -319,7 +309,7 @@ class Phi3FlashAttention2(nn.Module):
       
 
 
-        # Because the input can be padded, the absolute sequence length depends on the max position id.
+     
         rotary_seq_len = (
             max(kv_seq_len, position_ids[:, -1].max().item() + 1) if position_ids is not None else kv_seq_len
         )
@@ -330,7 +320,7 @@ class Phi3FlashAttention2(nn.Module):
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
-        # repeat k/v heads if n_kv_heads < n_heads
+
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
@@ -461,9 +451,9 @@ class Phi3PreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = True
     _no_split_modules = ["Phi3DecoderLayer"]
     _skip_keys_device_placement = "past_key_values"
-    _supports_flash_attn_2 = True
-    _supports_sdpa = True
-    _supports_cache_class = True
+    # _supports_flash_attn_2 = True
+    # _supports_sdpa = True
+    # _supports_cache_class = True
 
 
 class NewPhi3Config(PretrainedConfig):
@@ -490,7 +480,7 @@ class NewPhi3Config(PretrainedConfig):
         original_max_position_embeddings=4096,
         initializer_range=0.02,
         rms_norm_eps=1e-5,
-        use_cache=True,
+        use_cache=False,
         tie_word_embeddings=False,
         rope_theta=10000.0,
         rope_scaling=None,

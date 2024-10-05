@@ -12,7 +12,6 @@ from hf_ref import (
     Phi3DecoderLayer,
     NewPhi3Config
 )
-from transformers.cache_utils import StaticCache
 
 
 pre_weight_map = {}
@@ -32,7 +31,7 @@ def _prepare_4d_causal_attention_mask_with_cache_position(
     batch_size: int,
 ):
     if attention_mask is not None and attention_mask.dim() == 4:
-        # In this case we assume that the mask comes already in inverted form and requires no inversion or slicing.
+        
         causal_mask = attention_mask
     else:
         causal_mask = torch.full((sequence_length, target_length), fill_value=min_dtype, dtype=dtype, device=device)
@@ -59,12 +58,11 @@ class Phi3PreTrainedModel(PreTrainedModel):
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
     _no_split_modules = ["Phi3DecoderLayer"]
-    _skip_keys_device_placement = "past_key_values"
-    _supports_flash_attn_2 = True
-    _supports_sdpa = True
-    _supports_cache_class = True
+    # _skip_keys_device_placement = "past_key_values"
+    # _supports_flash_attn_2 = True
+    # _supports_sdpa = True
+    # _supports_cache_class = True
 
-    _version = "0.0.5"
 
                 
 class EmbedModel(nn.Module):
@@ -97,12 +95,7 @@ class EmbedModel(nn.Module):
         
         
 class Body(Phi3PreTrainedModel):
-    """
-    Transformer decoder consisting of *config.num_hidden_layers* layers. Each layer is a [`Phi3DecoderLayer`]
 
-    Args:
-        config: Phi3Config
-    """
 
     def __init__(self, block_size, config: NewPhi3Config):
         super().__init__(config)
@@ -195,7 +188,7 @@ class Body(Phi3PreTrainedModel):
 class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
     _tied_weights_keys = ["lm_head.weight"]
 
-    # Copied from transformers.models.llama.modeling_llama.LlamaForCausalLM.__init__ with Llama->Phi3
+    
     def __init__(self, config):
         super().__init__(config)
         self.config = config
@@ -314,14 +307,6 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         use_cache=True,
         **kwargs,
     ):
-        # If we have cache: let's slice `input_ids` through `cache_position`, to keep only the unprocessed tokens
-        # Exception 1: when passing input_embeds, input_ids may be missing entries
-        # Exception 2: some generation methods do special slicing of input_ids, so we don't need to do it here
-        if past_key_values is not None:
-            if inputs_embeds is not None:  # Exception 1
-                input_ids = input_ids[:, -cache_position.shape[0] :]
-            elif input_ids.shape[1] != cache_position.shape[0]:  # Default case (the "else", a no op, is Exception 2)
-                input_ids = input_ids[:, cache_position]
 
         if attention_mask is not None and position_ids is None:
             # create position_ids on the fly for batch generation
@@ -340,27 +325,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
             # The clone here is for the same reason as for `position_ids`.
             model_inputs = {"input_ids": input_ids.clone(memory_format=torch.contiguous_format), "inputs_embeds": None}
 
-        if isinstance(past_key_values, StaticCache) and attention_mask.ndim == 2:
-            if model_inputs["inputs_embeds"] is not None:
-                batch_size, sequence_length, _ = model_inputs["inputs_embeds"].shape
-                device = model_inputs["inputs_embeds"].device
-            else:
-                batch_size, sequence_length = model_inputs["input_ids"].shape
-                device = model_inputs["input_ids"].device
-
-            dtype = self.lm_head.weight.dtype
-            min_dtype = torch.finfo(dtype).min
-
-            attention_mask = _prepare_4d_causal_attention_mask_with_cache_position(
-                attention_mask,
-                sequence_length=sequence_length,
-                target_length=past_key_values.get_max_length(),
-                dtype=dtype,
-                device=self.config.device,
-                min_dtype=min_dtype,
-                cache_position=cache_position,
-                batch_size=batch_size,
-            )
+        
 
         model_inputs.update(
             {
@@ -387,9 +352,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
                 return attention_mask
             return None
 
-        # For SDPA, when possible, we will rely on its `is_causal` argument instead of its `attn_mask` argument, in
-        # order to dispatch on Flash Attention 2. This feature is not compatible with static cache, as SDPA will fail
-        # to infer the attention mask.
+        
         past_seen_tokens =  0
 
         dtype, device = input_tensor.dtype, input_tensor.device
@@ -399,7 +362,6 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
                 attention_mask.shape[-1]
             )
 
-        # In case the provided `attention` mask is 2D, we generate a causal mask here (4D).
         causal_mask = _prepare_4d_causal_attention_mask_with_cache_position(
             attention_mask,
             sequence_length=sequence_length,
