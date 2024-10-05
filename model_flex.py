@@ -13,7 +13,7 @@ from hf_ref import (
     NewPhi3Config
 )
 
-
+import time
 pre_weight_map = {}
 file_num = 1
 tensor_dict = {}
@@ -112,7 +112,7 @@ class Body(Phi3PreTrainedModel):
     def load_one_file(self):
     
         global file_num, tensor_dict
-        
+        print(f'{file_num}번째 파일 오픈함', flush=True)
         if file_num > 6:
             print("파일 번호가 6번을 넘어감")
         file_path = self.config.base_path + f'/model-0000{file_num}-of-00006.safetensors'
@@ -167,7 +167,7 @@ class Body(Phi3PreTrainedModel):
         past_key_values: Optional[List[torch.FloatTensor]] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ):
-        
+        st = time.time()
         for decoder_layer in self.layers:
             
             layer_outputs = decoder_layer(
@@ -181,7 +181,8 @@ class Body(Phi3PreTrainedModel):
                 )
 
             hidden_states = layer_outputs[0]
-
+        end = time.time()
+        print(f'디코더 레이어 한 배치 포워드 {end-st}초', flush=True)
         return hidden_states
 
 
@@ -251,6 +252,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         position_ids_list = []
         cache_position_list = []
         causal_mask_list = []
+
         for i, hidden_states in enumerate(hidden_list):
             past_seen_tokens = 0
             cache_position_list.append(torch.arange(
@@ -267,16 +269,23 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
                                             cache_position=cache_position_list[i],
                                             batch_size=input_ids[i].shape[0],
                                             ))
-            
+        st = time.time()
         body = Body(self.config.block_size, self.config)
-
+        end = time.time()
+        print(f'바디 모델 로드 {end-st}초', flush=True)
 
         for idx in range(0, 40, self.config.block_size):
+            st = time.time()
             body.load_weights(idx)
+            print(f'모델 웨잇 로드 {end-st}초', flush=True)
+            st = time.time()
             for i, hidden_states in enumerate(hidden_list):
+                print(f'{i} 번째 배치 바디 포워드')
                 outputs = body(idx, hidden_states, causal_mask_list[i], position_ids_list[i], None, cache_position_list[i])
                 hidden_list[i] = outputs
                 del outputs
+            end = time.time()
+            print(f'배치들 전체 포워드 {end-st}초', flush=True)
         del body
 
         self.load_weights()
