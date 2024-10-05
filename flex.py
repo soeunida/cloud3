@@ -87,11 +87,18 @@ class CustomedPipeline():
                 inner_batch.append(tokenized['input_ids'])
                 inner_batch_m.append(tokenized['attention_mask'])
 
-            inner_batch_tensor = torch.stack(inner_batch)
-            inner_batch_tensor_m = torch.stack(inner_batch_m)
-            
-            self.input_ids.append(inner_batch_tensor)
-            self.attention_mask.append(inner_batch_tensor_m)
+            try:
+                inner_batch_tensor = torch.stack(inner_batch)
+                inner_batch_tensor_m = torch.stack(inner_batch_m)
+                self.input_ids.append(inner_batch_tensor)
+                self.attention_mask.append(inner_batch_tensor_m)
+            except:
+                inner_batch_tensor = torch.stack(inner_batch[:-1])
+                inner_batch_tensor_m = torch.stack(inner_batch_m[:-1])
+                self.input_ids.append(inner_batch_tensor)
+                self.attention_mask.append(inner_batch_tensor_m)
+                self.input_ids.append(inner_batch[-1])
+                self.attention_mask.append(inner_batch_m[-1])
             
     
         self.o_batch_size = o_batch_size
