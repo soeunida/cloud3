@@ -6,12 +6,6 @@ import gc
 from flex_gen import FlexGeneration
 torch.random.manual_seed(0)
 model_id = "microsoft/Phi-3-medium-4k-instruct"
-# model = AutoModelForCausalLM.from_pretrained(
-#     model_id,
-#     device_map="cuda",
-#     torch_dtype="auto",
-#     trust_remote_code=True,
-# )
 
 
 class CustomedPipeline():
@@ -29,6 +23,7 @@ class CustomedPipeline():
         self.attention_mask = []
         self.device = device
         self.labels = []
+        self.prompt_lens = [0] * 50
         self.generate_cls = FlexGeneration(self.model)
         self.o_batch_size = 0
         self.i_batch_size = 0
@@ -68,23 +63,23 @@ class CustomedPipeline():
             for line in f:
                 json_obj = json.loads(line)
                 model_inputs.append(json_obj)
-                
-        messages = [inputs['message'] for inputs in model_inputs]
-        self.labels = [inputs['answer'] for inputs in model_inputs]
-        sorted_messages = sorted(messages, key=lambda mess: len(mess[0]['content']))
+        
+        sorted_model_inputs = sorted(model_inputs, key=lambda inputs : len(inputs['message'][0]['content']))
+        messages = [inputs['message'] for inputs in sorted_model_inputs]
+        self.labels = [inputs['answer'] for inputs in sorted_model_inputs]
+        self.max_message_length = len(messages[-1][0]['content'])
 
-        self.max_message_length = len(sorted_messages[-1][0]['content'])
-
-        batches = self.batchify(sorted_messages, i_batch_size)
+        batches = self.batchify(messages, i_batch_size)
         outer_batches = self.outer_batchify(batches, o_batch_size)
         idx = 0
-        for outer_batch in outer_batches:
+        for i, outer_batch in enumerate(outer_batches):
             inner_batch = []
             inner_batch_m = []
             idx += o_batch_size* i_batch_size -1
             if idx >= len(messages):
                 idx = len(messages) - 1
-            max_len = len(sorted_messages[idx][0]['content'])
+            max_len = len(messages[idx][0]['content'])
+            self.prompt_lens[i] = max_len
 
             for inner in outer_batch:
                 tokenized = self.apply_chat_template_with_padding(inner, self.tokenizer, max_len)
@@ -107,9 +102,8 @@ class CustomedPipeline():
     
         self.o_batch_size = o_batch_size
         self.i_batch_size = i_batch_size
-        # self.input_ids = [token['input_ids'] for token in outer_batch for outer_batch in tokenized_batches]
-        # self.attention_mask = [[token['attention_mask'] for token in outer_batch] for outer_batch in tokenized_batches]
-  
+        
+        
     def forward(self, max_new_tokens):
         times = 0
         cnt = 0
@@ -120,7 +114,7 @@ class CustomedPipeline():
             st = time.time()
             inputs = batch[0].to(self.device)
             masks = batch[1].to(self.device)
- 
+
             outs = self.generate_cls.generate(input_ids_list=inputs, attention_mask_list=masks, max_new_tokens=max_new_tokens)
 
             if cnt == 0:
@@ -133,7 +127,6 @@ class CustomedPipeline():
             print('inference time per item ',(end-st)/(self.o_batch_size*self.i_batch_size))
             times += end - st
             cnt += 1
-            break
             if cnt % 5 == 0:
                 gc.collect()
         print('total inference time ', times)
@@ -162,13 +155,15 @@ class CustomedPipeline():
         for outputs in model_outputs['generated_sequence']:
             answer = self.find_pattern(outputs)
             decoded_answer = self.tokenizer.decode(answer)
+            
             if self.labels[i] in decoded_answer:
                 correct += 1
             else:
-                decoded_answer = self.tokenizer.decode(outputs[91:])
+                decoded_answer = self.tokenizer.decode(outputs[self.prompt_lens[i//(self.o_batch_size*self.i_batch_size)]:])
+            
             result.append([{'generated':decoded_answer, 'label' : self.labels[i]}])
             i += 1
-
+        print(result)
         total = i
         print('맞은 개수', correct)
         print('총 개수 ',total)

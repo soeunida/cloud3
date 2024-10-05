@@ -51,7 +51,7 @@ def _prepare_4d_causal_attention_mask_with_cache_position(
     return causal_mask
 @dataclass
 class CausalLMOutputWithPast(ModelOutput):
-    logit_list : List
+    logit_tensor : torch.FloatTensor
 
 class Phi3PreTrainedModel(PreTrainedModel):
     config_class = NewPhi3Config
@@ -244,32 +244,27 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         embed_model = EmbedModel(self.config)
         embed_model.load_weights()
         
-        hidden_tensor = torch.zeros(input_ids.shape[0], input_ids.shape[1], input_ids.shape[2], self.config.hidden_size, dtype=torch.float32, device=self.config.device)
+        o_b, i_b, seqlen = input_ids.shape
+        hidden_tensor = torch.zeros((o_b, i_b, seqlen, self.config.hidden_size), dtype=torch.float32, device=self.config.device)
         for i, inputs in enumerate(input_ids):
-            hidden_tensor[i].copy_(embed_model(inputs))
+            hidden_tensor[i] = embed_model(inputs)
         del embed_model
         
-        max_seq_len = max([hidden_states.shape[1] for hidden_states in hidden_tensor])
 
-        cache_position_tensor = torch.zeros(len(hidden_tensor), max_seq_len, device=self.config.device, dtype=torch.int32)
-        position_ids_tensor = torch.zeros(len(hidden_tensor), 1, max_seq_len, device=self.config.device, dtype=torch.int32)
-        cache_position = torch.arange(0, max_seq_len, device=self.config.device)
+        cache_position = torch.arange(0, seqlen, device=self.config.device)
         position_ids = cache_position.unsqueeze(0)
         
-        for i, hidden_states in enumerate(hidden_tensor):
-            seq_len = hidden_states.shape[1]
-            cache_position_tensor[i, :seq_len] = cache_position[:seq_len]
-            position_ids_tensor[i, :, :seq_len] = position_ids[:, :seq_len]
-            # causal_mask_list.append(_prepare_4d_causal_attention_mask_with_cache_position(
-            #                                 attention_mask=attention_mask_list[i],
-            #                                 sequence_length=input_ids[i].shape[1],
-            #                                 target_length=input_ids[i].shape[1],
-            #                                 dtype=input_ids[i].dtype,
-            #                                 device=input_ids[i].device,
-            #                                 min_dtype = torch.iinfo(torch.int32).min,
-            #                                 cache_position=cache_position_list[i],
-            #                                 batch_size=input_ids[i].shape[0],
-            #                                 ))
+    
+        # causal_mask_list.append(_prepare_4d_causal_attention_mask_with_cache_position(
+        #                                 attention_mask=attention_mask_list[i],
+        #                                 sequence_length=input_ids[i].shape[1],
+        #                                 target_length=input_ids[i].shape[1],
+        #                                 dtype=input_ids[i].dtype,
+        #                                 device=input_ids[i].device,
+        #                                 min_dtype = torch.iinfo(torch.int32).min,
+        #                                 cache_position=cache_position_list[i],
+        #                                 batch_size=input_ids[i].shape[0],
+        #                                 ))
 
             
         body = Body(self.config.block_size, self.config)
@@ -279,8 +274,8 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
             body.load_weights(idx)
             st = time.time()
             for i, hidden_states in enumerate(hidden_tensor):
-                outputs = body(idx, hidden_states, attention_mask_list[i], position_ids_tensor[i], None, cache_position_tensor[i])
-                hidden_tensor[i].copy_(outputs)
+                outputs = body(idx, hidden_states, attention_mask_list[i], position_ids, None, cache_position)
+                hidden_tensor[i] = outputs
                 del outputs
             end = time.time()
             print(f'배치들 전체 포워드 {end-st}초', flush=True)
@@ -288,11 +283,11 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
 
         self.load_weights()
         
-        logit_list = torch.zeros(hidden_tensor.shape[0], hidden_tensor.shape[1], hidden_tensor.shape[2], self.config.vocab_size, dtype=torch.float32, device=self.config.device)
-        for hidden_states in hidden_tensor:
+        logit_tensor = torch.zeros((o_b, i_b, seqlen, self.config.vocab_size), dtype=torch.float32, device=self.config.device)
+        for i, hidden_states in enumerate(hidden_tensor):
             hidden_states = self.norm(hidden_states)
             logits = self.lm_head(hidden_states).float()
-            logit_list[i].copy_(logits)
+            logit_tensor[i] =logits
             del logits
             
         del hidden_tensor
@@ -300,7 +295,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         print('forward')
 
         return CausalLMOutputWithPast(
-            logit_list=logit_list
+            logit_tensor=logit_tensor
         )
 
     # Copied from transformers.models.llama.modeling_llama.LlamaForCausalLM.prepare_inputs_for_generation

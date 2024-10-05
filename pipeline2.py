@@ -136,8 +136,11 @@ class CustomedPipeline():
                     correct += 1
                 else:
                     decoded_answer = self.tokenizer.decode(text[91:])
+                
+                #result.append([{'generated':decoded_answer, 'label':self.labels[i]}])
                 tmp_dict['generated_text'] = [{'content':prefill, 'role' : 'user'},{'role':'assistant', 'content':decoded_answer}]
                 result.append([tmp_dict])
+        print(result)
         total = len(self.labels)
         print('맞은 개수', correct)
         print('총 개수 ',len(self.labels))
