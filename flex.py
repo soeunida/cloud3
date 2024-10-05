@@ -126,10 +126,8 @@ class CustomedPipeline():
                 result = outs.reshape(-1, outs.shape[-1])
             else:
                 result = torch.cat([result, outs.reshape(-1, outs.shape[-1])], dim=0)
-            print('outs.',result.shape)
-            
+
             end = time.time()
-            print(len(result))
             print('batch load and inference time ', (end - st))
             print('inference time per item ',(end-st)/(self.o_batch_size*self.i_batch_size))
             times += end - st
