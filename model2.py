@@ -86,7 +86,7 @@ class Body(Phi3PreTrainedModel):
         
 
     def load_one_file(self):
-        print(f'{file_num}번째 파일 오픈함')
+        print(f'{file_num}번째 파일 오픈함', flush=True)
         global file_num, tensor_dict
         
         if file_num > 6:
@@ -147,7 +147,7 @@ class Body(Phi3PreTrainedModel):
         st = time.time()
         self.load_weights(idx)
         end = time.time()
-        print(f'모델 웨잇 로드 {end-st}초')
+        print(f'모델 웨잇 로드 {end-st}초', flush=True)
         torch.cuda.nvtx.range_pop()
         st = time.time()
         torch.cuda.nvtx.range_push(f"decoder compute")
@@ -164,7 +164,7 @@ class Body(Phi3PreTrainedModel):
             hidden_states = layer_outputs[0]
         torch.cuda.nvtx.range_pop()
         end = time.time()
-        print(f'디코더 레이어 포워드 {end-st}초')
+        print(f'디코더 레이어 포워드 {end-st}초', flush=True)
         return hidden_states
 
 
@@ -219,7 +219,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        print('forward 시작! ',input_ids.device)
+        print('forward 시작! ',input_ids.device, flush=True)
         st_forward = time.time()
         torch.cuda.nvtx.range_push(" 포워ㅗ드 시작 ")
         global file_num
@@ -228,17 +228,17 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         st = time.time()
         self.load_one_file()
         end = time.time()
-        print(f'첫번째 파일 오픈 {end-st}초')
+        print(f'첫번째 파일 오픈 {end-st}초', flush=True)
         torch.cuda.nvtx.range_push("embedding load ")
         st = time.time()
         embed_model = EmbedModel(self.config)
         end = time.time()
-        print(f'임베딩 모델 로드 {end-st}초')
+        print(f'임베딩 모델 로드 {end-st}초', flush=True)
         torch.cuda.nvtx.range_pop()
         st = time.time()
         hidden_states = embed_model(input_ids)
         end = time.time()
-        print(f'임베드 포워드 {end-st}초')
+        print(f'임베드 포워드 {end-st}초', flush=True)
         del embed_model
 
         past_seen_tokens = 0
@@ -263,7 +263,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         st = time.time()
         body = Body(self.config.block_size, self.config)
         end = time.time()
-        print(f'바디 모델 로드 {end-st}초')
+        print(f'바디 모델 로드 {end-st}초', flush=True)
         torch.cuda.nvtx.range_pop()
         for idx in range(0, 40, self.config.block_size):
             outputs = body(idx, hidden_states, causal_mask, position_ids, None, cache_position)
@@ -271,14 +271,14 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         st = time.time()
         del body
         end = time.time()
-        print(f'바디 모델 삭제 {end-st}초')
+        print(f'바디 모델 삭제 {end-st}초', flush=True)
         
         hidden_states = outputs
         st = time.time()
         torch.cuda.nvtx.range_push("lm 헤드 웨잇 로드")
         self.load_weights()
         end = time.time()
-        print(f'lm헤드 웨잇 로드 {end-st}초')
+        print(f'lm헤드 웨잇 로드 {end-st}초', flush=True)
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("lm 헤드 compute")
         st = time.time()
@@ -287,11 +287,11 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         torch.cuda.nvtx.range_pop()
         logits = logits.float()
         end = time.time()
-        print(f'lm 헤드 컴퓨트 {end-st}초')
+        print(f'lm 헤드 컴퓨트 {end-st}초', flush=True)
 
-        print('forward')
+        print('forward', flush=True)
         end = time.time()
-        print(f'첫번째 파일 오픈 {end-st_forward}초')
+        print(f'첫번째 파일 오픈 {end-st_forward}초', flush=True)
         torch.cuda.nvtx.range_pop()
         return CausalLMOutputWithPast(
             logits=logits
