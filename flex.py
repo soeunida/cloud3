@@ -32,7 +32,6 @@ class CustomedPipeline():
         self.generate_cls = FlexGeneration(self.model)
         self.o_batch_size = 0
         self.i_batch_size = 0
-        self.max_new_length = 0
         self.max_message_length = 0
         
     
@@ -63,7 +62,7 @@ class CustomedPipeline():
     
         return tokenized
     
-    def load_data(self, file_path, o_batch_size, i_batch_size, max_new_tokens):
+    def load_data(self, file_path, o_batch_size, i_batch_size):
         model_inputs = []
         with open(file_path, 'r', encoding='utf-8') as f:
             for line in f:
@@ -74,8 +73,8 @@ class CustomedPipeline():
         self.labels = [inputs['answer'] for inputs in model_inputs]
         sorted_messages = sorted(messages, key=lambda mess: len(mess[0]['content']))
 
-        # self.max_message_length = max(len(mess[0]['content']) for mess in messages) 
-        # self.max_new_length = self.max_message_length + max_new_tokens + 1
+        self.max_message_length = len(sorted_messages[-1][0]['content'])
+
         batches = self.batchify(sorted_messages, i_batch_size)
         outer_batches = self.outer_batchify(batches, o_batch_size)
         idx = 0
@@ -83,6 +82,8 @@ class CustomedPipeline():
             inner_batch = []
             inner_batch_m = []
             idx += o_batch_size* i_batch_size -1
+            if idx >= len(messages):
+                idx = len(messages) - 1
             max_len = len(sorted_messages[idx][0]['content'])
 
             for inner in outer_batch:
@@ -113,15 +114,15 @@ class CustomedPipeline():
         times = 0
         cnt = 0
         self.model.eval()
+ 
         result = torch.empty(0, self.max_message_length, device=self.config.device)
         for batch in zip(self.input_ids, self.attention_mask):
             st = time.time()
             inputs = batch[0].to(self.device)
             masks = batch[1].to(self.device)
-            print('inputs. shape', inputs.shape)
-            print('mask shape ',masks.shape)
+ 
             outs = self.generate_cls.generate(input_ids_list=inputs, attention_mask_list=masks, max_new_tokens=max_new_tokens)
-            print(outs.shape)
+
             if cnt == 0:
                 result = outs.reshape(-1, outs.shape[-1])
             else:
