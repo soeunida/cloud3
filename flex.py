@@ -46,7 +46,7 @@ class CustomedPipeline():
     def batchify(self, data, batch_size):
         return [data[i:i + batch_size] for i in range(0, len(data), batch_size)]
     
-    def apply_chat_template_with_padding(self, inner, tokenizer, m_len):
+    def apply_chat_template_with_padding(self, inner, tokenizer, max_len):
         chat_message = self.tokenizer.apply_chat_template(
             inner, 
             tokenize=False  
@@ -55,7 +55,7 @@ class CustomedPipeline():
         tokenized = tokenizer(
             chat_message,
             padding='max_length',  
-            max_length=m_len, 
+            max_length=max_len, 
             truncation=True,      
             return_tensors="pt",    
             return_attention_mask=True  
@@ -72,18 +72,21 @@ class CustomedPipeline():
                 
         messages = [inputs['message'] for inputs in model_inputs]
         self.labels = [inputs['answer'] for inputs in model_inputs]
-        
-        self.max_message_length = max(len(mess[0]['content']) for mess in messages) 
-        self.max_new_length = self.max_message_length + max_new_tokens + 1
-        batches = self.batchify(messages, i_batch_size)
+        sorted_messages = sorted(messages, key=lambda mess: len(mess[0]['content']))
+
+        # self.max_message_length = max(len(mess[0]['content']) for mess in messages) 
+        # self.max_new_length = self.max_message_length + max_new_tokens + 1
+        batches = self.batchify(sorted_messages, i_batch_size)
         outer_batches = self.outer_batchify(batches, o_batch_size)
-        
+        idx = 0
         for outer_batch in outer_batches:
             inner_batch = []
             inner_batch_m = []
-            
+            idx += o_batch_size* i_batch_size -1
+            max_len = len(sorted_messages[idx][0]['content'])
+
             for inner in outer_batch:
-                tokenized = self.apply_chat_template_with_padding(inner, self.tokenizer, m_len=self.max_message_length)
+                tokenized = self.apply_chat_template_with_padding(inner, self.tokenizer, max_len)
                 inner_batch.append(tokenized['input_ids'])
                 inner_batch_m.append(tokenized['attention_mask'])
 
@@ -115,14 +118,18 @@ class CustomedPipeline():
             st = time.time()
             inputs = batch[0].to(self.device)
             masks = batch[1].to(self.device)
-
+            print('inputs. shape', inputs.shape)
+            print('mask shape ',masks.shape)
             outs = self.generate_cls.generate(input_ids_list=inputs, attention_mask_list=masks, max_new_tokens=max_new_tokens)
-
+            print(outs.shape)
             if cnt == 0:
                 result = outs.reshape(-1, outs.shape[-1])
             else:
                 result = torch.cat([result, outs.reshape(-1, outs.shape[-1])], dim=0)
+            print('outs.',result.shape)
+            
             end = time.time()
+            print(len(result))
             print('batch load and inference time ', (end - st))
             print('inference time per item ',(end-st)/(self.o_batch_size*self.i_batch_size))
             times += end - st
