@@ -253,8 +253,9 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         cache_position_list = []
         causal_mask_list = attention_mask_list
         
-
+        
         for i, hidden_states in enumerate(hidden_list):
+            st = time.time()
             past_seen_tokens = 0
             cache_position_list.append(torch.arange(
                 past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=self.config.device
@@ -270,21 +271,22 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
             #                                 cache_position=cache_position_list[i],
             #                                 batch_size=input_ids[i].shape[0],
             #                                 ))
-        st = time.time()
+            end = time.time()
+            print(f'cache position ids 저장{end-st}초', flush=True)
+            
         body = Body(self.config.block_size, self.config)
-        end = time.time()
-        print(f'바디 모델 로드 {end-st}초', flush=True)
+
 
         for idx in range(0, 40, self.config.block_size):
-            st = time.time()
             body.load_weights(idx)
-            end = time.time()
-            print(f'모델 웨잇 로드 {end-st}초', flush=True)
-            
+            st = time.time()
             for i, hidden_states in enumerate(hidden_list):
                 print(f'{i} 번째 배치 바디 포워드')
                 outputs = body(idx, hidden_states, causal_mask_list[i], position_ids_list[i], None, cache_position_list[i])
+                st = time.time()
                 hidden_list[i] = outputs
+                end = time.time()
+                print(f'hiddenstate 다시 저장{end-st}초', flush=True)
                 del outputs
             end = time.time()
             print(f'배치들 전체 포워드 {end-st}초', flush=True)
@@ -295,7 +297,10 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         for hidden_states in hidden_list:
             hidden_states = self.norm(hidden_states)
             logits = self.lm_head(hidden_states)
+            st = time.time()
             logit_list.append(logits.float())
+            end = time.time()
+            print(f'logit list 저장 {end-st}초', flush=True)
             del logits
             
         del hidden_list

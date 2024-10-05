@@ -314,13 +314,11 @@ class Phi3FlashAttention2(nn.Module):
 
 
 
-        st = time.time()
         cos, sin = self.rotary_emb(value_states, seq_len=rotary_seq_len, position_ids=position_ids)
       
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
-        end = time.time()
-        print(f'rope embedding {end-st}초')
+       
 
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
@@ -348,7 +346,7 @@ class Phi3FlashAttention2(nn.Module):
             key_states = key_states.to(target_dtype)
             value_states = value_states.to(target_dtype)
             
-        st = time.time()
+  
         attn_output_unpad = flash_attn_varlen_func(
                                     query_states,
                                     key_states,
@@ -367,16 +365,13 @@ class Phi3FlashAttention2(nn.Module):
                                     block_table=None,
                                 )
         
-        end = time.time()
-        print(f'flash attention {end-st}초')
+  
         attn_output = pad_input(attn_output_unpad, indices_q, batch_size, q_len)
         
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
         attn_output = attn_output.to(torch.float32)
-        st = time.time()
         attn_output = self.o_proj(attn_output)
-        end = time.time()
-        print(f'out projection {end-st}초')
+
         if not output_attentions:
             attn_weights = None
 
@@ -411,10 +406,7 @@ class Phi3DecoderLayer(nn.Module):
 
         residual = hidden_states
 
-        st = time.time()
         hidden_states = self.input_layernorm(hidden_states)
-        end = time.time()
-        print(f'input layernorm {end-st}초')
         torch.cuda.nvtx.range_push("Attention start compute ")
         attn_outputs, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
@@ -429,15 +421,10 @@ class Phi3DecoderLayer(nn.Module):
         hidden_states = residual + self.resid_attn_dropout(attn_outputs)
 
         residual = hidden_states
-        st = time.time()
         hidden_states = self.post_attention_layernorm(hidden_states)
-        end = time.time()
-        print(f'post attention norm {end-st}초')
+ 
         torch.cuda.nvtx.range_push("mlp  start compute ")
-        st = time.time()
         hidden_states = self.mlp(hidden_states)
-        end = time.time()
-        print(f'mlp layer {end-st}초')
         torch.cuda.nvtx.range_pop()
         hidden_states = residual + self.resid_mlp_dropout(hidden_states)
 
