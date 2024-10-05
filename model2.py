@@ -86,9 +86,8 @@ class Body(Phi3PreTrainedModel):
         
 
     def load_one_file(self):
-        print(f'{file_num}번째 파일 오픈함', flush=True)
         global file_num, tensor_dict
-        
+        print(f'{file_num}번째 파일 오픈함', flush=True)
         if file_num > 6:
             print("파일 번호가 6번을 넘어감")
         file_path = self.config.base_path + f'/model-0000{file_num}-of-00006.safetensors'
