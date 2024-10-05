@@ -97,7 +97,6 @@ class Phi3MLP(nn.Module):
         self.config = config
         self.gate_up_proj = nn.Linear(config.hidden_size, 2 * config.intermediate_size, bias=False)
         self.down_proj = nn.Linear(config.intermediate_size, config.hidden_size, bias=False)
-
         self.activation_fn = ACT2FN[config.hidden_act]
 
     def forward(self, hidden_states: torch.FloatTensor) -> torch.FloatTensor:
@@ -475,6 +474,7 @@ class NewPhi3Config(PretrainedConfig):
     def __init__(
         self,
         base_path = '',
+        device="cuda:0",
         vocab_size=32064,
         block_size = 2,
         hidden_size=5120,
@@ -500,6 +500,7 @@ class NewPhi3Config(PretrainedConfig):
         sliding_window=2047,
         **kwargs,
     ):
+        self.device = device
         self.vocab_size = vocab_size
         self.hidden_size = hidden_size
         self.intermediate_size = intermediate_size

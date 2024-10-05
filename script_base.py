@@ -2,8 +2,8 @@ import torch
 from transformers import AutoTokenizer
 from customed_pipeline import CustomedPipeline
 from hf_ref import NewPhi3Config
-from model_tri import CustomedPhi3ForCausalLM
-#from model2 import CustomedPhi3ForCausalLM
+#from model_tri import CustomedPhi3ForCausalLM
+from model2 import CustomedPhi3ForCausalLM
 import requests
 
 def download_model():
@@ -26,13 +26,11 @@ def download_model():
 model_id = "microsoft/Phi-3-medium-4k-instruct"
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-config = NewPhi3Config(base_path='/nas/user/hayoung')
+config = NewPhi3Config(base_path='/home/samsung/model', device='cuda:0')
 model = CustomedPhi3ForCausalLM(config)
 
 pipe = CustomedPipeline(model, config)
-pipe.load_data(file_path= "/home/hayoung/ss/test.jsonl", batch_size=30)
+pipe.load_data(file_path= "/data.jsonl", batch_size=60)
 outputs = pipe.forward(max_new_tokens=15)
 result = pipe.postprocess(outputs)
-print(result)
 
- 

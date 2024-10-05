@@ -25,11 +25,11 @@ def download_model():
 model_id = "microsoft/Phi-3-medium-4k-instruct"
 
 tokenizer = AutoTokenizer.from_pretrained(model_id)
-config = NewPhi3Config(base_path='/nas/user/hayoung')
+config = NewPhi3Config(base_path='/home/samsung/model', device='cuda:0')
 model = CustomedPhi3ForCausalLM(config)
 
 pipe = CustomedPipeline(model, config)
-pipe.load_data(file_path= "/home/hayoung/ss/data.jsonl", o_batch_size=8, i_batch_size=20)
+pipe.load_data(file_path= "/data.jsonl", o_batch_size=8, i_batch_size=20)
 outputs = pipe.forward(max_new_tokens=10)
 result = pipe.postprocess(outputs)
 

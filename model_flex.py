@@ -14,7 +14,6 @@ from hf_ref import (
 )
 from transformers.cache_utils import StaticCache
 
-device = torch.device('cuda:0')
 
 pre_weight_map = {}
 file_num = 1
@@ -73,9 +72,7 @@ class EmbedModel(nn.Module):
         super().__init__()
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.vocab_size
- 
-        global device
-        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx).to(device)
+        self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size, self.padding_idx).to(config.device)
         self.embed_dropout = nn.Dropout(config.embd_pdrop)   
         
     def load_weights(self):
@@ -109,15 +106,15 @@ class Body(Phi3PreTrainedModel):
 
     def __init__(self, block_size, config: NewPhi3Config):
         super().__init__(config)
-        global device
+        self.config = config
         self.layers = nn.ModuleList(
-            [Phi3DecoderLayer(config, i) for i in range(block_size)]
-        ).to(device)
-        self._attn_implementation = config._attn_implementation
+            [Phi3DecoderLayer(self.config, i) for i in range(block_size)]
+        ).to(self.config.device)
+        self._attn_implementation = self.config._attn_implementation
         self.gradient_checkpointing = False
         # Initialize weights and apply final processing
         self.block_size = block_size
-        self.config = config
+        
 
     def load_one_file(self):
     
@@ -127,7 +124,7 @@ class Body(Phi3PreTrainedModel):
             print("파일 번호가 6번을 넘어감")
         file_path = self.config.base_path + f'/model-0000{file_num}-of-00006.safetensors'
         
-        with safe_open(file_path, framework="pt", device="cuda") as f:
+        with safe_open(file_path, framework="pt", device=self.config.device) as f:
             for key in f.keys():
                 tensor_dict[key] = f.get_tensor(key)
         
@@ -201,11 +198,10 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
     # Copied from transformers.models.llama.modeling_llama.LlamaForCausalLM.__init__ with Llama->Phi3
     def __init__(self, config):
         super().__init__(config)
-        global device
-        
-        self.norm = Phi3RMSNorm(config.hidden_size).to(device)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False).to(device)
         self.config = config
+        self.norm = Phi3RMSNorm(self.config.hidden_size).to(self.config.device)
+        self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False).to(self.config.device)
+        
 
     def load_weights(self):
         global pre_weight_map, tensor_dict
@@ -227,7 +223,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
             print("파일 번호가 6번을 넘어감")
         file_path = self.config.base_path + f'/model-0000{file_num}-of-00006.safetensors'
         
-        with safe_open(file_path, framework="pt", device="cuda") as f:
+        with safe_open(file_path, framework="pt", device=self.config.device) as f:
             for key in f.keys():
                 tensor_dict[key] = f.get_tensor(key)
         
@@ -265,7 +261,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         for i, hidden_states in enumerate(hidden_list):
             past_seen_tokens = 0
             cache_position_list.append(torch.arange(
-                past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=device
+                past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=self.config.device
                 ))
             position_ids_list.append(cache_position_list[-1].unsqueeze(0))        
             causal_mask_list.append(_prepare_4d_causal_attention_mask_with_cache_position(
@@ -360,7 +356,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
                 sequence_length=sequence_length,
                 target_length=past_key_values.get_max_length(),
                 dtype=dtype,
-                device=device,
+                device=self.config.device,
                 min_dtype=min_dtype,
                 cache_position=cache_position,
                 batch_size=batch_size,
