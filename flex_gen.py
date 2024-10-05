@@ -30,7 +30,7 @@ class FlexGeneration():
         cnt = 0
         while cnt < max_new_tokens:
             outputs = self.model(input_ids_list, attention_mask_list)
-            
+            print(f'{cnt+1} 번째 토큰 생성중')
             for i, output in enumerate(outputs['logit_list']):
                 next_token_logits = output.clone()[:, -1, :].float()/0.7
                 next_tokens = torch.argmax(next_token_logits, dim=-1)
