@@ -332,7 +332,6 @@ class Phi3FlashAttention2(nn.Module):
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
         
-        attn_mask = attention_mask.unsqueeze(-1).unsqueeze(-1)
         batch_size = query_states.shape[0]
         query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self.upad_input(
             query_states, key_states, value_states, attention_mask, q_len
@@ -384,7 +383,7 @@ class Phi3DecoderLayer(nn.Module):
         super().__init__()
 
         self.config = config
-        self.self_attn = Phi3Attention(config, layer_idx=layer_idx)
+        self.self_attn = Phi3FlashAttention2(config, layer_idx=layer_idx)
 
         self.mlp = Phi3MLP(config)
         self.input_layernorm = Phi3RMSNorm(config.hidden_size, eps=config.rms_norm_eps)

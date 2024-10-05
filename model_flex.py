@@ -251,7 +251,8 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         
         position_ids_list = []
         cache_position_list = []
-        causal_mask_list = []
+        causal_mask_list = attention_mask_list
+        
 
         for i, hidden_states in enumerate(hidden_list):
             past_seen_tokens = 0
@@ -259,16 +260,16 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
                 past_seen_tokens, past_seen_tokens + hidden_states.shape[1], device=self.config.device
                 ))
             position_ids_list.append(cache_position_list[-1].unsqueeze(0))        
-            causal_mask_list.append(_prepare_4d_causal_attention_mask_with_cache_position(
-                                            attention_mask=attention_mask_list[i],
-                                            sequence_length=input_ids[i].shape[1],
-                                            target_length=input_ids[i].shape[1],
-                                            dtype=input_ids[i].dtype,
-                                            device=input_ids[i].device,
-                                            min_dtype = torch.iinfo(torch.int32).min,
-                                            cache_position=cache_position_list[i],
-                                            batch_size=input_ids[i].shape[0],
-                                            ))
+            # causal_mask_list.append(_prepare_4d_causal_attention_mask_with_cache_position(
+            #                                 attention_mask=attention_mask_list[i],
+            #                                 sequence_length=input_ids[i].shape[1],
+            #                                 target_length=input_ids[i].shape[1],
+            #                                 dtype=input_ids[i].dtype,
+            #                                 device=input_ids[i].device,
+            #                                 min_dtype = torch.iinfo(torch.int32).min,
+            #                                 cache_position=cache_position_list[i],
+            #                                 batch_size=input_ids[i].shape[0],
+            #                                 ))
         st = time.time()
         body = Body(self.config.block_size, self.config)
         end = time.time()
@@ -277,8 +278,9 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         for idx in range(0, 40, self.config.block_size):
             st = time.time()
             body.load_weights(idx)
+            end = time.time()
             print(f'모델 웨잇 로드 {end-st}초', flush=True)
-            st = time.time()
+            
             for i, hidden_states in enumerate(hidden_list):
                 print(f'{i} 번째 배치 바디 포워드')
                 outputs = body(idx, hidden_states, causal_mask_list[i], position_ids_list[i], None, cache_position_list[i])
