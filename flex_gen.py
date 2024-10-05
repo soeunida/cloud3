@@ -19,25 +19,28 @@ class FlexGeneration():
         **model_kwargs
         ) :
         
+        o_b, i_b, seqlen = input_ids_list.shape
+
+        tmp_ids_list = torch.zeros((o_b, i_b, seqlen+max_new_tokens), device=input_ids_list[0].device, dtype=input_ids_list[0].dtype)
+        tmp_am_list = torch.zeros((o_b, i_b, seqlen+max_new_tokens), device=attention_mask_list[0].device, dtype=attention_mask_list[0].dtype)
+        
+        tmp_ids_list[:, :,  :seqlen] = input_ids_list
+        tmp_am_list[:, :, :seqlen] = attention_mask_list
+
         cnt = 0
         while cnt < max_new_tokens:
-            outputs = self.model(input_ids_list,attention_mask_list)
+            outputs = self.model(input_ids_list, attention_mask_list)
+            
             for i, output in enumerate(outputs['logit_list']):
                 next_token_logits = output.clone()[:, -1, :].float()/0.7
-            
                 next_tokens = torch.argmax(next_token_logits, dim=-1)
-         
-                input_ids = torch.cat([input_ids_list[i], next_tokens[:, None]], dim=-1)
-                attention_mask = torch.cat(
-                    [attention_mask_list[i], attention_mask_list[i].new_ones((attention_mask_list[i].shape[0], 1))], dim=-1
-                )
-                input_ids_list[i] = input_ids
-                attention_mask_list[i] = attention_mask
+                tmp_ids_list[i][:, seqlen + cnt] = next_tokens
+                tmp_am_list[i][:, seqlen + cnt] = 1
 
             del outputs
             cnt += 1
-            
-        return input_ids_list
+  
+        return tmp_ids_list
 
 
     

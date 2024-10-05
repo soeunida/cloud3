@@ -237,17 +237,16 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         return_dict: Optional[bool] = None,
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, CausalLMOutputWithPast]:
-        print(f'input_ids 텐서가 할당된 장치: {input_ids.device}', flush=True)
+        
         global file_num
         file_num = 1
         self.load_one_file()
         embed_model = EmbedModel(self.config)
         embed_model.load_weights()
         
-        hidden_list = []
-        for inputs in input_ids:
-            hidden_list.append(embed_model(inputs))
-        hidden_tensor = torch.stack(hidden_list)
+        hidden_tensor = torch.zeros(input_ids.shape[0], input_ids.shape[1], input_ids.shape[2], self.config.hidden_size, dtype=torch.float32, device=self.config.device)
+        for i, inputs in enumerate(input_ids):
+            hidden_tensor[i].copy_(embed_model(inputs))
         del embed_model
         
         max_seq_len = max([hidden_states.shape[1] for hidden_states in hidden_tensor])
@@ -258,7 +257,6 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
         position_ids = cache_position.unsqueeze(0)
         
         for i, hidden_states in enumerate(hidden_tensor):
-            st = time.time()
             seq_len = hidden_states.shape[1]
             cache_position_tensor[i, :seq_len] = cache_position[:seq_len]
             position_ids_tensor[i, :, :seq_len] = position_ids[:, :seq_len]
@@ -272,8 +270,7 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
             #                                 cache_position=cache_position_list[i],
             #                                 batch_size=input_ids[i].shape[0],
             #                                 ))
-            end = time.time()
-            print(f'cache position ids 저장{end-st}초', flush=True)
+
             
         body = Body(self.config.block_size, self.config)
 
@@ -282,13 +279,8 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
             body.load_weights(idx)
             st = time.time()
             for i, hidden_states in enumerate(hidden_tensor):
-                print(f'{i} 번째 배치 바디 포워드')
                 outputs = body(idx, hidden_states, attention_mask_list[i], position_ids_tensor[i], None, cache_position_tensor[i])
-                st = time.time()
                 hidden_tensor[i].copy_(outputs)
-                print(f'hidden list 텐서가 할당된 장치: {hidden_tensor[i].device}', flush=True)
-                end = time.time()
-                print(f'hiddenstate 다시 저장{end-st}초', flush=True)
                 del outputs
             end = time.time()
             print(f'배치들 전체 포워드 {end-st}초', flush=True)
@@ -296,17 +288,14 @@ class CustomedPhi3ForCausalLM(Phi3PreTrainedModel):
 
         self.load_weights()
         
-        logit_list = torch.zeros(len(hidden_tensor), max_seq_len, vocab_size, dtype=torch.float32, device=self.config.device)
+        logit_list = torch.zeros(hidden_tensor.shape[0], hidden_tensor.shape[1], hidden_tensor.shape[2], self.config.vocab_size, dtype=torch.float32, device=self.config.device)
         for hidden_states in hidden_tensor:
             hidden_states = self.norm(hidden_states)
             logits = self.lm_head(hidden_states).float()
-            st = time.time()
-            logit_list.copy_(logits)
-            end = time.time()
-            print(f'logit list 저장 {end-st}초', flush=True)
+            logit_list[i].copy_(logits)
             del logits
             
-        del hidden_list
+        del hidden_tensor
 
         print('forward')
 
