@@ -29,7 +29,7 @@ class CustomedPipeline():
         self.attention_mask = []
         self.device = device
         self.labels = []
-        self.generate_cls =  FlexGeneration(self.model)
+        self.generate_cls = FlexGeneration(self.model)
         self.o_batch_size = 0
         self.i_batch_size = 0
         
@@ -44,6 +44,22 @@ class CustomedPipeline():
     def batchify(self, data, batch_size):
         return [data[i:i + batch_size] for i in range(0, len(data), batch_size)]
     
+    def apply_chat_template_with_padding(self, inner, tokenizer, m_len):
+        chat_message = self.tokenizer.apply_chat_template(
+            inner, 
+            tokenize=False  
+        )
+        
+        tokenized = tokenizer(
+            chat_message,
+            padding='max_length',  
+            max_length=m_len, 
+            truncation=True,      
+            return_tensors="pt",    
+            return_attention_mask=True  
+        )
+    
+        return tokenized
     
     def load_data(self, file_path, o_batch_size, i_batch_size):
         model_inputs = []
@@ -54,6 +70,8 @@ class CustomedPipeline():
                 
         messages = [inputs['message'] for inputs in model_inputs]
         self.labels = [inputs['answer'] for inputs in model_inputs]
+        
+        max_message_length = max(len(mess[0]['content']) for mess in messages)
         batches = self.batchify(messages, i_batch_size)
         outer_batches = self.outer_batchify(batches, o_batch_size)
         
@@ -61,19 +79,18 @@ class CustomedPipeline():
             inner_batch = []
             inner_batch_m = []
             
-            tokenized = [self.tokenizer.apply_chat_template(inner, 
-                                                tokenize=True, 
-                                                padding=True, 
-                                                truncation=True,
-                                                return_tensors="pt", 
-                                                return_dict=True) for inner in outer_batch]
-                
-            for token in tokenized:
-                inner_batch.append(token['input_ids'])
-                inner_batch_m.append(token['attention_mask'])
-            self.input_ids.append(inner_batch)
-            self.attention_mask.append(inner_batch_m)
+            for inner in outer_batch:
+                tokenized = self.apply_chat_template_with_padding(inner, self.tokenizer, m_len=max_message_length)
+                inner_batch.append(tokenized['input_ids'])
+                inner_batch_m.append(tokenized['attention_mask'])
+
+            inner_batch_tensor = torch.stack(inner_batch)
+            inner_batch_tensor_m = torch.stack(inner_batch_m)
             
+            self.input_ids.append(inner_batch_tensor)
+            self.attention_mask.append(inner_batch_tensor_m)
+            
+    
         self.o_batch_size = o_batch_size
         self.i_batch_size = i_batch_size
         # self.input_ids = [token['input_ids'] for token in outer_batch for outer_batch in tokenized_batches]
@@ -86,9 +103,9 @@ class CustomedPipeline():
         self.model.eval()
         for batch in zip(self.input_ids, self.attention_mask):
             st = time.time()
-            inputs = [batch.to(self.device) for batch in batch[0]]
-            masks = [batch.to(self.device) for batch in batch[1]]
-            
+            inputs = batch[0].to(self.device)
+            masks = batch[1].to(self.device)
+                
             outs = self.generate_cls.generate(input_ids_list=inputs, attention_mask_list=masks, max_new_tokens=max_new_tokens)
 
             for out in outs:
