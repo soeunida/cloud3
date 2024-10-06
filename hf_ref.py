@@ -20,6 +20,8 @@ from transformers.utils import (
 from flash_attn import flash_attn_varlen_func
 from flash_attn.bert_padding import pad_input, index_first_axis
 
+setattr(torch.nn.Linear, "reset_parameters", lambda self: None)
+setattr(torch.nn.LayerNorm, "reset_parameters", lambda self: None)
 
 class Phi3RMSNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-6):
@@ -171,7 +173,7 @@ class Phi3Attention(nn.Module):
         kv_seq_len = key_states.shape[-2]
        
         cos, sin = self.rotary_emb(value_states, position_ids, seq_len=kv_seq_len)
-
+        
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
 
     
@@ -292,9 +294,9 @@ class Phi3FlashAttention2(nn.Module):
         output_attentions = False
 
         bsz, q_len, _ = hidden_states.size()
-        torch.cuda.nvtx.range_push(f"linear ")
+
         qkv = self.qkv_proj(hidden_states)
-        torch.cuda.nvtx.range_pop()
+      
         query_pos = self.num_heads * self.head_dim
         query_states = qkv[..., :query_pos]
         key_states = qkv[..., query_pos : query_pos + self.num_key_value_heads * self.head_dim]
@@ -304,7 +306,7 @@ class Phi3FlashAttention2(nn.Module):
         query_states = query_states.view(bsz, q_len, self.num_heads, self.head_dim).transpose(1, 2)
         key_states = key_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
         value_states = value_states.view(bsz, q_len, self.num_key_value_heads, self.head_dim).transpose(1, 2)
-
+  
         kv_seq_len = key_states.shape[-2]
       
 
@@ -312,24 +314,22 @@ class Phi3FlashAttention2(nn.Module):
             max(kv_seq_len, position_ids[:, -1].max().item() + 1) if position_ids is not None else kv_seq_len
         )
 
-
-
         cos, sin = self.rotary_emb(value_states, seq_len=rotary_seq_len, position_ids=position_ids)
-      
 
         query_states, key_states = apply_rotary_pos_emb(query_states, key_states, cos, sin, position_ids)
        
-
+       
         key_states = repeat_kv(key_states, self.num_key_value_groups)
         value_states = repeat_kv(value_states, self.num_key_value_groups)
 
         attn_dropout = self.attention_dropout if self.training else 0.0
-
-
             
         query_states = query_states.transpose(1, 2)
         key_states = key_states.transpose(1, 2)
         value_states = value_states.transpose(1, 2)
+        
+   
+        batch_size = query_states.shape[0]
         
         batch_size = query_states.shape[0]
         query_states, key_states, value_states, indices_q, cu_seq_lens, max_seq_lens = self.upad_input(
@@ -338,6 +338,7 @@ class Phi3FlashAttention2(nn.Module):
         
         cu_seqlens_q, cu_seqlens_k = cu_seq_lens
         max_seqlen_in_batch_q, max_seqlen_in_batch_k = max_seq_lens
+
         
         if query_states.dtype == torch.float32:
 
@@ -346,7 +347,8 @@ class Phi3FlashAttention2(nn.Module):
             key_states = key_states.to(target_dtype)
             value_states = value_states.to(target_dtype)
             
-  
+        
+        
         attn_output_unpad = flash_attn_varlen_func(
                                     query_states,
                                     key_states,
@@ -359,19 +361,18 @@ class Phi3FlashAttention2(nn.Module):
                                     softmax_scale=None,
                                     causal=self.is_causal,
                                     window_size=(-1, -1),  # -1 means infinite context window
+                                    softcap=0.0, # 0.0 means deactivated
                                     alibi_slopes=None,
                                     deterministic=False,
                                     return_attn_probs=False,
                                     block_table=None,
                                 )
         
-  
         attn_output = pad_input(attn_output_unpad, indices_q, batch_size, q_len)
         
         attn_output = attn_output.reshape(bsz, q_len, self.hidden_size).contiguous()
         attn_output = attn_output.to(torch.float32)
         attn_output = self.o_proj(attn_output)
-
         if not output_attentions:
             attn_weights = None
 
@@ -407,7 +408,8 @@ class Phi3DecoderLayer(nn.Module):
         residual = hidden_states
 
         hidden_states = self.input_layernorm(hidden_states)
-        torch.cuda.nvtx.range_push("Attention start compute ")
+
+        # Self Attention
         attn_outputs, self_attn_weights, present_key_value = self.self_attn(
             hidden_states=hidden_states,
             attention_mask=attention_mask,
@@ -417,15 +419,12 @@ class Phi3DecoderLayer(nn.Module):
             use_cache=use_cache,
             cache_position=cache_position,
         )
-        torch.cuda.nvtx.range_pop()
+
         hidden_states = residual + self.resid_attn_dropout(attn_outputs)
 
         residual = hidden_states
         hidden_states = self.post_attention_layernorm(hidden_states)
- 
-        torch.cuda.nvtx.range_push("mlp  start compute ")
         hidden_states = self.mlp(hidden_states)
-        torch.cuda.nvtx.range_pop()
         hidden_states = residual + self.resid_mlp_dropout(hidden_states)
 
         outputs = (hidden_states,)
