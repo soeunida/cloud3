@@ -68,8 +68,11 @@ class CustomedPipeline():
             for line in f:
                 json_obj = json.loads(line)
                 model_inputs.append(json_obj)
-        messages = [inputs['message'] for inputs in model_inputs]
-        self.labels = [inputs['answer'] for inputs in model_inputs]
+                
+        sorted_model_inputs = sorted(model_inputs, key=lambda inputs : len(inputs['message'][0]['content']))
+        messages = [inputs['message'] for inputs in sorted_model_inputs]
+        self.labels = [inputs['answer'] for inputs in sorted_model_inputs]
+  
         self.batch_size = batch_size
         batches = self.batchify(messages, batch_size)
         tokenized = [self.tokenizer.apply_chat_template(batch, 
@@ -130,7 +133,7 @@ class CustomedPipeline():
             tmp_dict = {}
             for i, text in enumerate(outputs):
                 answer = self.find_pattern(text)
-                prefill = self.tokenizer.decode(text[self.prompt_lens[i//self.batch_size]:])
+                prefill = self.tokenizer.decode(text)
                 decoded_answer = self.tokenizer.decode(answer)
                 if self.labels[i] in decoded_answer:
                     correct += 1
