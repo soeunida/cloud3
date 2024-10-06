@@ -153,16 +153,18 @@ class CustomedPipeline():
         correct = 0
         i = 0
         for outputs in model_outputs['generated_sequence']:
+            tmp_dict = {}
             answer = self.find_pattern(outputs)
             decoded_answer = self.tokenizer.decode(outputs[self.prompt_lens[i//(self.o_batch_size*self.i_batch_size)]:])
-            
+            prefill = self.tokenizer.decode(outputs)
             if self.labels[i] in decoded_answer:
                 correct += 1
-            
-            tmp_dict['generated_text'] = [{'content':prefill, 'role' : 'user'},{'role':'assistant', 'content':decoded_answer}]
+                tmp_dict['generated_text'] = [{'content':prefill, 'role' : 'user'},{'role':'assistant', 'content':answer}]
+            else:
+                tmp_dict['generated_text'] = [{'content':prefill, 'role' : 'user'},{'role':'assistant', 'content':decoded_answer}]
             result.append([tmp_dict])
             i += 1
-            
+        print(result)
         total = i
         print('맞은 개수', correct)
         print('총 개수 ',total)
